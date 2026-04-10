@@ -1,0 +1,291 @@
+#version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_GOOGLE_include_directive : require
+
+layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
+
+layout(binding = 1, set = 0, rgba32f) uniform image2D OutputRadianceImage;
+layout(binding = 2, set = 0, rgba32f) uniform image2D OutputAlbedoImage;
+layout(binding = 3, set = 0, rgba32f) uniform image2D OutputNormalImage;
+layout(binding = 4, set = 0, rgba32f) uniform image2D OutputWorldPositionImage;
+
+// Camera Info
+layout(binding = 6, set = 0) uniform CameraData 
+{
+	mat4 viewInverse;
+	mat4 projInverse;
+	float samples;
+	uint frame;
+} cam;
+
+// Light
+const uint MAX_AREA_LIGHT_NUM = 5;
+
+struct AreaLightData
+{
+    vec3 beginPos;
+    vec3 u;
+    vec3 v;
+	vec3 color;
+	vec3 rayDir;
+};
+
+struct UniformAreaLightData
+{
+    uint lightCount;
+    AreaLightData data[MAX_AREA_LIGHT_NUM];
+};
+layout(binding = 8, set = 0) buffer AreaLights { UniformAreaLightData lightData; } areaLights;
+
+struct RayPayload {
+	vec3 hitPosition;
+	vec3 hitNormal;
+	vec3 hitTangent;
+	vec3 hitColor;
+	vec3 hitSpecularTint;
+	float hitRoughness;
+	float hitMetallic;
+	float hitSpecular;
+  
+ 	bool isHit;
+	bool isLight;
+};
+
+// PayLoad
+layout(location = 0) rayPayloadEXT RayPayload rayPayLoad;
+layout(location = 2) rayPayloadEXT bool shadowed;
+
+#include "random.glsl"
+#include "brdf_utils.glsl"
+void main() 
+{
+	const uint MAX_RAY_DEPTH = 8;
+	const float MIN_RENDER_NOISE_THRESHOLD = 0.002; 
+	const int MIN_NUM_RENDER_SAMPLES = 4;
+
+	float tmin = 0.001;
+	float tmax = 10000.0;
+
+	vec3 averageColor = vec3(0.0);
+
+	vec3 averageOutputRadiance = vec3(0);
+	vec3 averageOutputDirectRadiance = vec3(0);
+	vec3 averageOutputIndirectRadiance = vec3(0);
+	vec3 averageOutputAlbedo = vec3(0);
+	vec3 averageOutputNormal = vec3(0);
+	vec3 averageOutputWorldPosition = vec3(0);
+
+	float accumulateVariance = 0;
+
+	uint seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x, cam.frame);
+
+	for(int i = 0; i < cam.samples; i++)
+	{
+		float r1 = rnd(seed);
+		float r2 = rnd(seed);
+
+		// Random Sample
+		vec4 origin = cam.viewInverse * vec4(0,0,0,1);
+		vec2 subpixel_jitter  =  vec2(r1, r2);
+		const vec2 pixelCenter = vec2(gl_LaunchIDEXT.xy) + subpixel_jitter;
+		const vec2 inUV        = pixelCenter / vec2(gl_LaunchSizeEXT.xy);
+		vec2       d           = inUV * 2.0 - 1.0;
+		vec4 target = cam.projInverse * vec4(d.x, -d.y, 1, 1) ;
+		vec3 direction = normalize((cam.viewInverse*vec4(normalize(target.xyz), 0.0)).xyz) ;
+
+		// Init Tracing
+		vec3 tracingAttenuation = vec3(1);
+
+		bool isFirstHit = true;	
+		bool isDirectedLight = true;	
+		vec3 OutputRadiance = vec3(0);
+		vec3 OutputDirectRadiance = vec3(0);
+		vec3 OutputIndirectRadiance = vec3(0);
+		vec3 OutputAlbedo = vec3(0);
+		vec3 OutputNormal = vec3(0);
+		vec3 OutputWorldPosition = vec3(0);
+
+		rayPayLoad.isHit = true;
+		rayPayLoad.isLight = false;
+
+		for(int j = 0; j < MAX_RAY_DEPTH; j++)
+		{	
+			traceRayEXT(topLevelAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, origin.xyz, tmin, direction, tmax, 0);
+			if(rayPayLoad.isHit)
+			{
+				if(isFirstHit)
+				{
+					OutputAlbedo = rayPayLoad.hitColor;
+					OutputNormal = rayPayLoad.hitNormal;
+					OutputWorldPosition = rayPayLoad.hitPosition;
+				}
+
+				// 自发光物体
+				if(rayPayLoad.isLight)
+				{			
+					if(isDirectedLight)
+					{
+						OutputDirectRadiance += tracingAttenuation * rayPayLoad.hitColor;
+					}		
+					else
+					{
+						OutputIndirectRadiance += tracingAttenuation * rayPayLoad.hitColor;
+					}
+					break;
+				}
+				// 计算光线弹射
+				else
+				{
+					// Context
+					vec3 viewDir = -direction;	
+					vec3 normal = normalize(rayPayLoad.hitNormal);
+					vec3 tangent = normalize(rayPayLoad.hitTangent);
+					vec3 bioNormal = normalize(cross(normal, tangent));
+					mat3 TBN = mat3(tangent, bioNormal, normal);
+					float NdotV = dot(viewDir, normal);
+
+					// Next Sample
+					vec3 ggx_normal = normalize(TBN * sample_ggx(rnd2(seed), rayPayLoad.hitRoughness));
+					direction = normalize(reflect(direction, ggx_normal));
+					bool goodSample = dot(direction, normal) > 0;
+
+
+					origin = vec4(rayPayLoad.hitPosition + 1e-4 * normal, 1);
+
+					// Directed Light
+					AreaLightData light = areaLights.lightData.data[0];
+					vec3 lightOri = origin.xyz;
+					float ru = rnd(seed);
+					float rv = rnd(seed);
+					vec3 lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
+					
+					bool faceToLight = dot(lightVec, normal) > 0;
+					float light_PDF = 0;
+					float lightDistanse = max(0.1, length(lightVec));
+					float Light_Area = length(light.u) * length(light.v);
+
+					if(faceToLight)
+					{
+						shadowed = true;
+						traceRayEXT(topLevelAS, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF,
+									0, 0, 1, lightOri, 0, lightVec, 0.99, 2);
+						if(!shadowed)
+						{				
+							lightVec = normalize(lightVec);
+							light_PDF = (lightDistanse*lightDistanse) / (max(0.01, abs(dot(-lightVec, light.rayDir))) * Light_Area);
+							float cos_theta_i = dot(lightVec, normal);
+							// 平分光线影响
+							// tracingAttenuation *= 0.5;
+
+							// BRDF Context
+							float NdotL = dot(lightVec, normal);
+							vec3 H_Dir = normalize(lightVec + viewDir);
+							float LdotH = dot(lightVec, H_Dir);
+							float NdotH = dot(normal, H_Dir);
+
+							// Compute
+							#include "brdf.glsl"
+
+							float brdf_PDF = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
+							float weight_MIS = light_PDF*light_PDF  / (light_PDF*light_PDF + brdf_PDF*brdf_PDF);
+
+							vec3 lightingRadiance = light.color * tracingAttenuation * BRDF_Final_Attenuation * cos_theta_i * weight_MIS / light_PDF;
+							// Accumulate Color
+							if(isDirectedLight)
+							{
+								OutputDirectRadiance += lightingRadiance;
+							}		
+							else
+							{
+								OutputIndirectRadiance += lightingRadiance;
+							}
+						}
+					}
+					if(!goodSample) break;
+
+					// BRDF Context
+					float NdotL = dot(direction, normal);
+					vec3 H_Dir = normalize(direction + viewDir);
+					float LdotH = dot(direction, H_Dir);
+					float NdotH = dot(normal, H_Dir);
+
+					// Compute
+					#include "brdf.glsl"
+
+					float brdf_pdf = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
+					float light_PDF_01 = 0;
+					// Hit Rect Light	
+					vec3 b = lightOri - light.beginPos;
+					vec3 e0 = direction;
+					float orig_detemenate = dot(cross(e0, light.u), light.v);
+					if (!(orig_detemenate == 0))
+					{
+						float t = dot(cross(b, light.u), light.v) / orig_detemenate;
+						float u = dot(cross(e0, light.v), b) / orig_detemenate;
+						float v = dot(cross(b, light.u), e0) / orig_detemenate;
+						if (u > 0 && v > 0 && u < 1 && v < 1 && t > 0)
+						{
+							float dis = length(light.beginPos + light.u * u + light.v * v - lightOri);
+							light_PDF_01 = (dis*dis) / (max(0.01, abs(dot(-direction, light.rayDir))) * Light_Area);
+						}			
+					}
+					float weight_MIS = brdf_pdf*brdf_pdf / (light_PDF_01*light_PDF_01 + brdf_pdf*brdf_pdf);
+					
+					float cos_theta_i = dot(direction, normal);
+					tracingAttenuation *= BRDF_Final_Attenuation * cos_theta_i * weight_MIS / brdf_pdf;				
+				}
+
+				if(!isFirstHit)
+				{
+					isDirectedLight = false;
+				}
+				isFirstHit = false;
+			}
+			// 光线逸散时
+			else
+			{
+				// float y = direction.y * 0.5 + 0.5;
+				// rayPayLoad.color *= mix(vec3(1.0, 1.0, 1.0), vec3(0.5, 0.7, 1.0), y);
+				if(isFirstHit)
+				{
+					OutputDirectRadiance = vec3(0);
+					OutputIndirectRadiance = vec3(0);
+					OutputAlbedo = vec3(0);
+					OutputNormal = normalize(-direction);
+					OutputWorldPosition = -OutputNormal * 1e6;
+					isFirstHit = false;
+				}
+				// tracingColor += vec3(0) * tracingAttenuation;
+				break;
+			}
+		}
+		
+		vec3 tracingColor = OutputDirectRadiance + OutputIndirectRadiance;
+		OutputRadiance = tracingColor / OutputAlbedo;
+
+		averageColor = i == 0 ? tracingColor : (tracingColor / (i + 1) + averageColor * i / (i + 1));
+		averageOutputRadiance = i == 0 ? OutputRadiance : (OutputRadiance / (i + 1) + averageOutputRadiance * i / (i + 1));
+		averageOutputDirectRadiance = i == 0 ? OutputDirectRadiance : (OutputDirectRadiance / (i + 1) + averageOutputDirectRadiance * i / (i + 1));
+		averageOutputIndirectRadiance = i == 0 ? OutputIndirectRadiance : (OutputIndirectRadiance / (i + 1) + averageOutputIndirectRadiance * i / (i + 1));
+		averageOutputAlbedo = i == 0 ? OutputAlbedo : (OutputAlbedo / (i + 1) + averageOutputAlbedo * i / (i + 1));
+		averageOutputNormal = i == 0 ? OutputNormal : (OutputNormal / (i + 1) + averageOutputNormal * i / (i + 1));
+		averageOutputWorldPosition = i == 0 ? OutputWorldPosition : (OutputWorldPosition / (i + 1) + averageOutputWorldPosition * i / (i + 1));
+		
+		// 自适应采样
+		accumulateVariance += dot(tracingColor - averageColor, tracingColor - averageColor);
+
+		if(i >= MIN_NUM_RENDER_SAMPLES)
+		{	
+			float noise = accumulateVariance / ((i - 1) * sqrt(i));
+			float norm = min(2.0, length(tracingColor));
+			float normalizeNoise = norm < 1e-6 ? 0 : noise / norm;
+			if (normalizeNoise < MIN_RENDER_NOISE_THRESHOLD) break;
+		}
+	}
+
+	imageStore(OutputRadianceImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputRadiance, 1));
+	imageStore(OutputAlbedoImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputAlbedo, 1));
+	imageStore(OutputNormalImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputNormal, 1));
+	imageStore(OutputWorldPositionImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputWorldPosition, 1));
+}
+

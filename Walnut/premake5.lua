@@ -1,7 +1,7 @@
 project "Walnut"
    kind "StaticLib"
    language "C++"
-   cppdialect "C++17"
+   cppdialect "C++20"
    targetdir "bin/%{cfg.buildcfg}"
    staticruntime "off"
 
@@ -13,8 +13,10 @@ project "Walnut"
 
       "../vendor/imgui",
       "../vendor/glfw/include",
+      "../vendor/assimpInclude",
       "../vendor/stb_image",
-
+      "../vendor/myVulkan",
+      "../vendor/VMA",
       "%{IncludeDir.VulkanSDK}",
       "%{IncludeDir.glm}",
    }
@@ -24,6 +26,7 @@ project "Walnut"
        "ImGui",
        "GLFW",
 
+      "../vendor/assimp2/assimp.lib",
        "%{Library.Vulkan}",
    }
 

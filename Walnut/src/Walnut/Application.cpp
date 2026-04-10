@@ -13,11 +13,15 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
+#include "tool.hpp"
 
 #include <iostream>
+#include <span>
 
 // Emedded font
 #include "ImGui/Roboto-Regular.embed"
+#include "myvulkan/VkBufferWrapper.h"
+
 
 extern bool g_ApplicationRunning;
 
@@ -33,28 +37,35 @@ extern bool g_ApplicationRunning;
 #define IMGUI_VULKAN_DEBUG_REPORT
 #endif
 
-static VkAllocationCallbacks* g_Allocator = NULL;
-static VkInstance               g_Instance = VK_NULL_HANDLE;
-static VkPhysicalDevice         g_PhysicalDevice = VK_NULL_HANDLE;
-static VkDevice                 g_Device = VK_NULL_HANDLE;
-static uint32_t                 g_QueueFamily = (uint32_t)-1;
-static VkQueue                  g_Queue = VK_NULL_HANDLE;
-static VkDebugReportCallbackEXT g_DebugReport = VK_NULL_HANDLE;
-static VkPipelineCache          g_PipelineCache = VK_NULL_HANDLE;
-static VkDescriptorPool         g_DescriptorPool = VK_NULL_HANDLE;
+#define VK_INSTANCE_VERSION VK_API_VERSION_1_2
 
-static ImGui_ImplVulkanH_Window g_MainWindowData;
-static int                      g_MinImageCount = 2;
-static bool                     g_SwapChainRebuild = false;
+VkAllocationCallbacks*   g_Allocator = NULL;
+VkInstance               g_Instance = VK_NULL_HANDLE;
+VkPhysicalDevice         g_PhysicalDevice = VK_NULL_HANDLE;
+VkDevice                 g_Device = VK_NULL_HANDLE;
+uint32_t                 g_QueueFamily = (uint32_t)-1;
+VkQueue                  g_Queue = VK_NULL_HANDLE;
+VkDebugReportCallbackEXT g_DebugReport = VK_NULL_HANDLE;
+VkPipelineCache          g_PipelineCache = VK_NULL_HANDLE;
+
+vulkan::VulkanAllocator*	g_pVkMemoryAllocator = &vulkan::VulkanAllocator::get();
+vulkan::CommandPool*		g_pCommandPool = nullptr;
+vulkan::DescriptorAllocator* g_DescriptorAllocator = new vulkan::DescriptorAllocator();
+
+ImGui_ImplVulkanH_Window g_MainWindowData;
+int                      g_MinImageCount = 2;
+bool                     g_SwapChainRebuild = false;
 
 // Per-frame-in-flight
 static std::vector<std::vector<VkCommandBuffer>> s_AllocatedCommandBuffers;
 static std::vector<std::vector<std::function<void()>>> s_ResourceFreeQueue;
 
+std::vector<std::function<void()>> s_VulkanRenderFuncQueue;
+
 // Unlike g_MainWindowData.FrameIndex, this is not the the swapchain image index
 // and is always guaranteed to increase (eg. 0, 1, 2, 0, 1, 2)
-static uint32_t s_CurrentFrameIndex = 0;
-
+uint32_t s_CurrentFrameIndex = 0;
+static uint32_t s_SwapChainimageIndex = 0;
 static Walnut::Application* s_Instance = nullptr;
 
 void check_vk_result(VkResult err)
@@ -81,10 +92,14 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 
 	// Create Vulkan Instance
 	{
+		VkApplicationInfo applicationInfo = {};
+		applicationInfo.apiVersion = VK_INSTANCE_VERSION;
+
 		VkInstanceCreateInfo create_info = {};
 		create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 		create_info.enabledExtensionCount = extensions_count;
 		create_info.ppEnabledExtensionNames = extensions;
+		create_info.pApplicationInfo = &applicationInfo;
 #ifdef IMGUI_VULKAN_DEBUG_REPORT
 		// Enabling validation layers
 		const char* layers[] = { "VK_LAYER_KHRONOS_validation" };
@@ -171,8 +186,21 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 
 	// Create Logical Device (with 1 queue)
 	{
-		int device_extension_count = 1;
-		const char* device_extensions[] = { "VK_KHR_swapchain" };
+		// Extension
+		std::vector<const char*> device_extensions = { "VK_KHR_swapchain" };
+		if constexpr (useVulkanRT)
+		{
+			device_extensions.emplace_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+			device_extensions.emplace_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);		
+		}
+
 		const float queue_priority[] = { 1.0f };
 		VkDeviceQueueCreateInfo queue_info[1] = {};
 		queue_info[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -183,16 +211,66 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 		create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 		create_info.queueCreateInfoCount = sizeof(queue_info) / sizeof(queue_info[0]);
 		create_info.pQueueCreateInfos = queue_info;
-		create_info.enabledExtensionCount = device_extension_count;
-		create_info.ppEnabledExtensionNames = device_extensions;
-		err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
-		check_vk_result(err);
+		create_info.enabledExtensionCount = device_extensions.size();
+		create_info.ppEnabledExtensionNames = device_extensions.data();
+
+		if constexpr (useVulkanRT)
+		{	
+			VkPhysicalDeviceBufferDeviceAddressFeatures enabledBufferDeviceAddresFeatures{};
+			enabledBufferDeviceAddresFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+			enabledBufferDeviceAddresFeatures.bufferDeviceAddress = VK_TRUE;
+
+			VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
+			enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+			enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+
+			VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
+			enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+			enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
+
+			VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQueryFeatures{};
+			enabledRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+			enabledRayQueryFeatures.rayQuery = VK_TRUE;
+
+			VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
+			physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+			physicalDeviceFeatures2.features.shaderInt64 = VK_TRUE;
+
+			enabledRayTracingPipelineFeatures.pNext = &enabledBufferDeviceAddresFeatures;
+			enabledAccelerationStructureFeatures.pNext = &enabledRayTracingPipelineFeatures;
+			enabledRayQueryFeatures.pNext = &enabledAccelerationStructureFeatures;
+			physicalDeviceFeatures2.pNext = &enabledRayQueryFeatures;
+
+			create_info.pEnabledFeatures = nullptr;
+			create_info.pNext = &physicalDeviceFeatures2;
+
+			err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
+			check_vk_result(err);
+		}
+		else
+		{
+			err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
+			check_vk_result(err);
+		}
+
 		vkGetDeviceQueue(g_Device, g_QueueFamily, 0, &g_Queue);
 	}
 
+	// ��ʼ��vmaAllocator
+	vulkan::VulkanAllocator::CreateInfo allocatorInfo{};
+	allocatorInfo.device = g_Device;
+	allocatorInfo.instance = g_Instance;
+	allocatorInfo.physicalDevice = g_PhysicalDevice;
+	allocatorInfo.vulkanApiVersion = VK_INSTANCE_VERSION;
+    g_pVkMemoryAllocator->init(allocatorInfo, VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT);
+
+	g_dynamicLoader = DynamicLoader(g_Instance, g_Device);
+	g_pCommandPool = new vulkan::CommandPool(g_Device, g_QueueFamily, true);
+
+
 	// Create Descriptor Pool
 	{
-		VkDescriptorPoolSize pool_sizes[] =
+		std::vector<vulkan::DescriptorAllocator::PoolSizeRatio> pool_sizes =
 		{
 			{ VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
 			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
@@ -204,15 +282,12 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
 			{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
 			{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
-			{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+			{ VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 },
+			{ VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1000},
+			{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 50 }
 		};
-		VkDescriptorPoolCreateInfo pool_info = {};
-		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-		pool_info.maxSets = 1000 * IM_ARRAYSIZE(pool_sizes);
-		pool_info.poolSizeCount = (uint32_t)IM_ARRAYSIZE(pool_sizes);
-		pool_info.pPoolSizes = pool_sizes;
-		err = vkCreateDescriptorPool(g_Device, &pool_info, g_Allocator, &g_DescriptorPool);
+		g_DescriptorAllocator->init(g_Device, 1000 * pool_sizes.size(), std::span<vulkan::DescriptorAllocator::PoolSizeRatio>(pool_sizes));
+
 		check_vk_result(err);
 	}
 }
@@ -253,13 +328,16 @@ static void SetupVulkanWindow(ImGui_ImplVulkanH_Window* wd, VkSurfaceKHR surface
 
 static void CleanupVulkan()
 {
-	vkDestroyDescriptorPool(g_Device, g_DescriptorPool, g_Allocator);
+	g_DescriptorAllocator->destroy_pools(g_Device);
 
 #ifdef IMGUI_VULKAN_DEBUG_REPORT
 	// Remove the debug report callback
 	auto vkDestroyDebugReportCallbackEXT = (PFN_vkDestroyDebugReportCallbackEXT)vkGetInstanceProcAddr(g_Instance, "vkDestroyDebugReportCallbackEXT");
 	vkDestroyDebugReportCallbackEXT(g_Instance, g_DebugReport, g_Allocator);
 #endif // IMGUI_VULKAN_DEBUG_REPORT
+
+	delete g_pCommandPool;
+	g_pVkMemoryAllocator->shutdown();
 
 	vkDestroyDevice(g_Device, g_Allocator);
 	vkDestroyInstance(g_Instance, g_Allocator);
@@ -276,6 +354,7 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
 
 	VkSemaphore image_acquired_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].ImageAcquiredSemaphore;
 	VkSemaphore render_complete_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].RenderCompleteSemaphore;
+	VkSemaphore denoise_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].denoiseComputeSemaphore;
 	err = vkAcquireNextImageKHR(g_Device, wd->Swapchain, UINT64_MAX, image_acquired_semaphore, VK_NULL_HANDLE, &wd->FrameIndex);
 	if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
 	{
@@ -290,6 +369,11 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
 	{
 		err = vkWaitForFences(g_Device, 1, &fd->Fence, VK_TRUE, UINT64_MAX);    // wait indefinitely instead of periodically checking
 		check_vk_result(err);
+
+		VkResult waitResult = vkGetFenceStatus(g_Device, fd->Fence);
+		if (waitResult != VK_SUCCESS) {
+			std::cout << "[Error Application]Fence is Not Signal!";
+		}
 
 		err = vkResetFences(g_Device, 1, &fd->Fence);
 		check_vk_result(err);
@@ -315,10 +399,17 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
 		check_vk_result(err);
 		VkCommandBufferBeginInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-		info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		// info.flags |= VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 		err = vkBeginCommandBuffer(fd->CommandBuffer, &info);
 		check_vk_result(err);
 	}
+
+	for (auto& func : s_VulkanRenderFuncQueue)
+	{
+		func();
+	}		
+	s_VulkanRenderFuncQueue.clear();
+
 	{
 		VkRenderPassBeginInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -337,12 +428,14 @@ static void FrameRender(ImGui_ImplVulkanH_Window* wd, ImDrawData* draw_data)
 	// Submit command buffer
 	vkCmdEndRenderPass(fd->CommandBuffer);
 	{
-		VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		VkSemaphore waitSemaphore[] = { image_acquired_semaphore };
+
+		VkPipelineStageFlags wait_stage[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
 		VkSubmitInfo info = {};
 		info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 		info.waitSemaphoreCount = 1;
-		info.pWaitSemaphores = &image_acquired_semaphore;
-		info.pWaitDstStageMask = &wait_stage;
+		info.pWaitSemaphores = waitSemaphore;
+		info.pWaitDstStageMask = wait_stage;
 		info.commandBufferCount = 1;
 		info.pCommandBuffers = &fd->CommandBuffer;
 		info.signalSemaphoreCount = 1;
@@ -473,7 +566,7 @@ namespace Walnut {
 		init_info.QueueFamily = g_QueueFamily;
 		init_info.Queue = g_Queue;
 		init_info.PipelineCache = g_PipelineCache;
-		init_info.DescriptorPool = g_DescriptorPool;
+		init_info.DescriptorPool = g_DescriptorAllocator->GetHandle();
 		init_info.Subpass = 0;
 		init_info.MinImageCount = g_MinImageCount;
 		init_info.ImageCount = wd->ImageCount;
@@ -543,6 +636,7 @@ namespace Walnut {
 		ImGui::DestroyContext();
 
 		CleanupVulkanWindow();
+
 		CleanupVulkan();
 
 		glfwDestroyWindow(m_WindowHandle);
@@ -591,6 +685,8 @@ namespace Walnut {
 				}
 			}
 
+			// ImGui Render
+			//==============================================
 			// Start the Dear ImGui frame
 			ImGui_ImplVulkan_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
@@ -625,6 +721,7 @@ namespace Walnut {
 				// We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
 				// any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
 				ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+
 				ImGui::Begin("DockSpace Demo", nullptr, window_flags);
 				ImGui::PopStyleVar();
 
@@ -647,8 +744,10 @@ namespace Walnut {
 					}
 				}
 
+				// ================== Main Render=========================== 
 				for (auto& layer : m_LayerStack)
 					layer->OnUIRender();
+
 
 				ImGui::End();
 			}
@@ -661,6 +760,8 @@ namespace Walnut {
 			wd->ClearValue.color.float32[1] = clear_color.y * clear_color.w;
 			wd->ClearValue.color.float32[2] = clear_color.z * clear_color.w;
 			wd->ClearValue.color.float32[3] = clear_color.w;
+
+			// Vulkan Render
 			if (!main_is_minimized)
 				FrameRender(wd, main_draw_data);
 

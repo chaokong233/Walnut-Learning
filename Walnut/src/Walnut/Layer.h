@@ -1,5 +1,7 @@
 #pragma once
 
+class ImGui_ImplVulkanH_Window;
+
 namespace Walnut {
 
 	class Layer

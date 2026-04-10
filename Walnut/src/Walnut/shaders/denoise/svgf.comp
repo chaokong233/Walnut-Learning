@@ -1,0 +1,253 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int8 : enable
+
+#define GROUP_SIZE 16
+#define KERNEL_RADIUS 1
+#define SIGMA_NORMAL 128
+#define SIGMA_DEPTH 5
+#define SIGMA_RANDIANCE 0.1   //Bigger -> More Weight
+#define RADIANCE_COLOR_MAX_CLAMP 1.5
+
+#define BLEND_ALPHA 0.1
+#define BLEND_NORMAL_THRESHOLD 0.85
+#define BLEND_ALBEDO_THRESHOLD 0.3
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE) in;  // 工作组大小
+// Uniform Data
+layout(binding = 0, set = 0) uniform uniformBuffer 
+{
+    float kernel_size;
+} denosieData;
+
+layout(binding = 1, set = 0) uniform CameraBuffer 
+{
+    mat4 preVPMatrix;
+} lastFrameCameraData;
+// Image
+layout(binding = 2, set = 0, rgba32f) uniform writeonly image2D outputImage;  // 输出
+layout(binding = 3, set = 0, rgba32f) uniform readonly image2D nowFrameRadianceImage_; // 当前帧辐照度
+layout(binding = 4, set = 0, rgba32f) uniform readonly image2D nowFrameVarianceImage_; // 辐照度方差
+layout(binding = 5, set = 0, rgba32f) uniform readonly image2D nowFrameAlbedoImage_; // 当前帧吸收率
+layout(binding = 6, set = 0, rgba32f) uniform readonly image2D nowFrameNormalImage_; // 当前帧法线
+layout(binding = 7, set = 0, rgba32f) uniform readonly image2D nowFrameWorldPositionImage_; // 当前帧世界位置
+
+layout(binding = 8, set = 0, rgba32f) uniform readonly image2D lastFrameFinalImage_; // 历史帧降噪结果
+layout(binding = 9, set = 0, rgba32f) uniform readonly image2D lastFrameVarianceImage_; // 辐照度方差
+layout(binding = 10, set = 0, rgba32f) uniform readonly image2D lastFrameAlbedoImage_; // 历史帧吸收率
+layout(binding = 11, set = 0, rgba32f) uniform readonly image2D lastFrameNormalImage_; // 历史帧法线
+layout(binding = 12, set = 0, rgba32f) uniform readonly image2D lastFrameWorldPositionImage_; // 历史帧世界位置
+
+#ifdef USE_SHARED_MEMORY
+    shared vec4 sharedData[GROUP_SIZE + 2*KERNEL_RADIUS][GROUP_SIZE + 2*KERNEL_RADIUS];
+#endif
+
+vec3 ClampColor(vec3 col)
+{
+    return clamp(col, vec3(0), vec3(RADIANCE_COLOR_MAX_CLAMP));
+}
+
+float CIELumen(vec3 col)
+{
+    return 0.3*col.x + 0.6*col.y + 0.1*col.z;
+}
+
+float CIELength(vec3 a, vec3 b)
+{
+    return abs(CIELumen(a) - CIELumen(b));
+}
+
+void main()
+ {    
+    ivec2 globalID = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 groupID = ivec2(gl_WorkGroupID.xy);
+    ivec2 localID = ivec2(gl_LocalInvocationID.xy);
+    ivec2 imageSize = imageSize(outputImage);
+    int blur_radius = int(denosieData.kernel_size);
+    
+    // 边界检查
+    if (globalID.x >= imageSize.x || globalID.y >= imageSize.y) 
+        return;
+
+#ifdef USE_SHARED_MEMORY
+    // Load Shared Memory
+        // Inner
+    sharedData[localID.x + KERNEL_RADIUS][localID.y + KERNEL_RADIUS] = imageLoad(nowFrameImage, globalID);
+
+        // Edge 
+            // Left
+    if(localID.x < KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(-KERNEL_RADIUS, 0);
+        if(clampPos.x >= 0){
+            sharedData[localID.x][localID.y + KERNEL_RADIUS] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x][localID.y + KERNEL_RADIUS] = vec4(0);
+        }
+    }
+            // Right
+    if(localID.x > GROUP_SIZE - KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(KERNEL_RADIUS, 0);
+        if(clampPos.x < imageSize.x){
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y + KERNEL_RADIUS] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y + KERNEL_RADIUS] = vec4(0);
+        }
+    }
+            // Up
+    if(localID.y > GROUP_SIZE - KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(0, KERNEL_RADIUS);
+        if(clampPos.y < imageSize.y){
+            sharedData[localID.x + KERNEL_RADIUS][localID.y + 2 * KERNEL_RADIUS] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x + KERNEL_RADIUS][localID.y + 2 * KERNEL_RADIUS] = vec4(0);
+        }
+    }
+
+            // Bottom
+    if(localID.y < KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(0, -KERNEL_RADIUS);
+        if(clampPos.y >= 0){
+            sharedData[localID.x + KERNEL_RADIUS][localID.y] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x + KERNEL_RADIUS][localID.y] = vec4(0);
+        }
+    }
+
+        // Corner
+            // Left Bottom
+    if(localID.x < KERNEL_RADIUS && localID.y < KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(-KERNEL_RADIUS, -KERNEL_RADIUS);
+        if(clampPos.x >= 0 && clampPos.y >= 0){
+            sharedData[localID.x][localID.y] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x][localID.y] = vec4(0);
+        }
+    }
+            // Right Bottom
+    if(localID.x > GROUP_SIZE - KERNEL_RADIUS && localID.y < KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(KERNEL_RADIUS, -KERNEL_RADIUS);
+        if(clampPos.x < imageSize.x && clampPos.y >= 0){
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y] = vec4(0);
+        }
+    }
+            // Left Up
+    if(localID.x < KERNEL_RADIUS && localID.y > GROUP_SIZE - KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(-KERNEL_RADIUS, KERNEL_RADIUS);
+        if(clampPos.x >= 0 && clampPos.y < imageSize.y){
+            sharedData[localID.x][localID.y + 2 * KERNEL_RADIUS] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x][localID.y + 2 * KERNEL_RADIUS] = vec4(0);
+        }
+    }
+
+            // Left Right 
+    if(localID.x > GROUP_SIZE - KERNEL_RADIUS && localID.y > GROUP_SIZE - KERNEL_RADIUS)
+    {
+        ivec2 clampPos = globalID + ivec2(KERNEL_RADIUS, KERNEL_RADIUS);
+        if(clampPos.x < imageSize.x && clampPos.y < imageSize.y){
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y + 2 * KERNEL_RADIUS] = imageLoad(nowFrameImage, clampPos);
+        }
+        else{
+            sharedData[localID.x + 2 * KERNEL_RADIUS][localID.y + 2 * KERNEL_RADIUS] = vec4(0);
+        }
+    }
+
+    // Barrier
+    barrier();
+    memoryBarrierShared();
+#endif 
+
+    vec3 colorSum = vec3(0.0);
+    float weightSum = 0;
+    
+    ivec2 kernel[] = {  ivec2(-1, 1),  ivec2(0, 1),  ivec2(1, 1),
+                        ivec2(-1, 0),  ivec2(0, 0),  ivec2(1, 0),
+                        ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1)};
+
+    vec3 pixelNormal = imageLoad(nowFrameNormalImage_, globalID).xyz;
+    vec3 pixelPosition = imageLoad(nowFrameWorldPositionImage_, globalID).xyz;
+    vec3 pixelRandiance = ClampColor(imageLoad(nowFrameRadianceImage_, globalID).xyz);
+
+    // 遍历核窗口
+    for(int i = 0; i < 9; i++)
+    {
+        ivec2 sampleCoord = globalID + kernel[i] * blur_radius;    
+        if(sampleCoord.x >= 0 && sampleCoord.y >= 0 &&
+            sampleCoord.x < imageSize.x && sampleCoord.y < imageSize.y)
+        {
+            vec3 sampleCol = ClampColor(imageLoad(nowFrameRadianceImage_, sampleCoord).xyz);
+
+            if(isnan(sampleCol.x) || isnan(sampleCol.y) || isnan(sampleCol.z))
+            {
+                sampleCol = vec3(0);
+            }
+
+            float weightNormal = max(pow(max(0, dot(imageLoad(nowFrameNormalImage_, sampleCoord).xyz, pixelNormal)), SIGMA_NORMAL), 1e-4);
+            float weightDepth = exp(-1 * abs(dot(imageLoad(nowFrameWorldPositionImage_, sampleCoord).xyz - pixelPosition, pixelNormal)) * SIGMA_DEPTH);
+            float weightRadiance = exp(-1 * abs(CIELength(sampleCol, pixelRandiance)) / (SIGMA_RANDIANCE * 1 + 1e-8));
+            float weight = weightNormal * weightDepth * weightRadiance;
+            colorSum += sampleCol * weight;
+            weightSum += weight;          
+        }
+    }
+
+    // 计算平均值
+    vec3 ColorRes = colorSum / max(1e-10, weightSum);
+
+    // Final Blend And Gammar 
+    if(blur_radius == 5)
+    {
+        vec3 pixelAlbedo = imageLoad(nowFrameAlbedoImage_, globalID).xyz;
+        vec3 color = ColorRes * pixelAlbedo;
+        color = pow(color, vec3(0.45));
+
+        // Proj to Last Frame
+        vec4 nowWorldPos = vec4(imageLoad(nowFrameWorldPositionImage_, globalID).xyz, 1);    
+        vec4 projWorldPos = lastFrameCameraData.preVPMatrix * nowWorldPos;
+        vec2 f_prevUV = ((projWorldPos.xy) / projWorldPos.w) * 0.5 + 0.5;
+        ivec2 prevUV = ivec2(int(f_prevUV.x * imageSize.x), int((1.0 - f_prevUV.y) * imageSize.y));
+
+        bool willBlend_01 = prevUV.x >= 0 && prevUV.y >= 0 &&
+               prevUV.x < imageSize.x && prevUV.y < imageSize.y;
+        // Blend To History
+        if(willBlend_01)
+        {
+            vec3 historyNormal = imageLoad(lastFrameNormalImage_, prevUV).xyz;
+            vec3 historyAlbedo = imageLoad(lastFrameAlbedoImage_, prevUV).xyz;
+            
+            // Clamp
+            bool willBlend_02 = dot(historyNormal, pixelNormal) > BLEND_NORMAL_THRESHOLD &&
+                 distance(historyAlbedo, pixelAlbedo) < BLEND_ALBEDO_THRESHOLD;
+            if(willBlend_02)
+            {
+                vec3 historyColor = ClampColor(imageLoad(lastFrameFinalImage_, prevUV).xyz);
+
+                if(isnan(historyColor.x) || isnan(historyColor.y) || isnan(historyColor.z))
+                {
+                    historyColor = vec3(0);
+                }
+                color = (1-BLEND_ALPHA) * historyColor + BLEND_ALPHA * color;
+            }
+        }
+
+        imageStore(outputImage, globalID, vec4(color, 1));
+        return;
+    }
+
+    imageStore(outputImage, globalID, vec4(ColorRes, 1));
+}

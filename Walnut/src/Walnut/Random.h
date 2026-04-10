@@ -1,6 +1,10 @@
 #pragma once
 
 #include <random>
+#define _USE_MATH_DEFINES
+#include "math.h"
+#include <cmath>
+#include <algorithm>
 
 #include <glm/glm.hpp>
 
@@ -29,6 +33,11 @@ namespace Walnut {
 			return (float)s_Distribution(s_RandomEngine) / (float)std::numeric_limits<uint32_t>::max();
 		}
 
+		static float Float(float min, float max)
+		{
+			return Float() * (max - min) + min;
+		}
+
 		static glm::vec3 Vec3()
 		{
 			return glm::vec3(Float(), Float(), Float());
@@ -41,9 +50,21 @@ namespace Walnut {
 
 		static glm::vec3 InUnitSphere()
 		{
-			return glm::normalize(Vec3(-1.0f, 1.0f));
+			auto a = Float(0, 2 * M_PI);
+			auto z = Float(-1, 1);
+			auto r = sqrt(1 - z*z);
+			return glm::vec3(r*cos(a), r*sin(a), z);
 		}
+
+		static glm::vec2 InUnitCircle()
+		{
+			auto theta = Float(0, 2 * M_PI);
+			auto r = Float(0.0f, 1.0f);
+			return glm::vec2(r*cos(theta), r*sin(theta));
+		}
+
 	private:
+		static std::random_device rd;
 		static std::mt19937 s_RandomEngine;
 		static std::uniform_int_distribution<std::mt19937::result_type> s_Distribution;
 	};

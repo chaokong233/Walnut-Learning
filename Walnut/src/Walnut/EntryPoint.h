@@ -34,6 +34,7 @@ int APIENTRY WinMain(HINSTANCE hInst, HINSTANCE hInstPrev, PSTR cmdline, int cmd
 
 int main(int argc, char** argv)
 {
+
 	return Walnut::Main(argc, argv);
 }
 

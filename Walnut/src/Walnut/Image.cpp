@@ -4,9 +4,13 @@
 #include "backends/imgui_impl_vulkan.h"
 
 #include "Application.h"
+#include "myVulkan/VulkanImage.h"
+
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
+extern VkQueue g_Queue;
 
 namespace Walnut {
 
@@ -273,7 +277,7 @@ namespace Walnut {
 			Application::FlushCommandBuffer(command_buffer);
 		}
 	}
-
+	
 	void Image::Resize(uint32_t width, uint32_t height)
 	{
 		if (m_Image && m_Width == width && m_Height == height)
@@ -286,6 +290,139 @@ namespace Walnut {
 
 		Release();
 		AllocateMemory(m_Width * m_Height * Utils::BytesPerPixel(m_Format));
+	}
+
+	StorageImage::StorageImage(uint32_t width, uint32_t height, ImageFormat format, vulkan::CommandPool* pool)
+		:pCmdPool_(pool),m_Width(width), m_Height(height), m_Format(format)
+	{
+
+		AllocateMemory(width * height * Utils::BytesPerPixel(format));
+	}
+
+	StorageImage::~StorageImage()
+	{
+		Release();
+	}
+
+	void StorageImage::Resize(uint32_t width, uint32_t height)
+	{
+		if (m_Image && m_Width == width && m_Height == height)
+			return;
+
+		// TODO: max size?
+
+		m_Width = width;
+		m_Height = height;
+
+		Release();
+		AllocateMemory(m_Width * m_Height * Utils::BytesPerPixel(m_Format));
+	}
+
+	void StorageImage::AllocateMemory(uint64_t size)
+	{
+		VkDevice device = Application::GetDevice();
+
+		VkResult err;
+		
+		VkFormat vulkanFormat = Utils::WalnutFormatToVulkanFormat(m_Format);
+
+		// Create the Image
+		{
+			VkImageCreateInfo info = {};
+			info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+			info.imageType = VK_IMAGE_TYPE_2D;
+			info.format = vulkanFormat;
+			info.extent.width = m_Width;
+			info.extent.height = m_Height;
+			info.extent.depth = 1;
+			info.mipLevels = 1;
+			info.arrayLayers = 1;
+			info.samples = VK_SAMPLE_COUNT_1_BIT;
+			info.tiling = VK_IMAGE_TILING_OPTIMAL;
+			info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+			info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			err = vkCreateImage(device, &info, nullptr, &m_Image);
+			check_vk_result(err);
+			VkMemoryRequirements req;
+			vkGetImageMemoryRequirements(device, m_Image, &req);
+			VkMemoryAllocateInfo alloc_info = {};
+			alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+			alloc_info.allocationSize = req.size;
+			alloc_info.memoryTypeIndex = Utils::GetVulkanMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, req.memoryTypeBits);
+			err = vkAllocateMemory(device, &alloc_info, nullptr, &m_Memory);
+			check_vk_result(err);
+			err = vkBindImageMemory(device, m_Image, m_Memory, 0);
+			check_vk_result(err);
+		}
+
+		{
+			vulkan::SingleTimeCommands cmd(pCmdPool_);
+			vulkan::VulkanImage::transitionImageLayout(cmd.getBuffer(), m_Image,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_GENERAL,
+				VK_IMAGE_ASPECT_COLOR_BIT
+				);
+			cmd.Submit(g_Queue);
+		}
+
+		// Create the Image View:
+		{
+			VkImageViewCreateInfo info = {};
+			info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+			info.image = m_Image;
+			info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			info.format = vulkanFormat;
+			info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			info.subresourceRange.baseMipLevel = 0;
+			info.subresourceRange.levelCount = 1;
+			info.subresourceRange.layerCount = 1;
+			err = vkCreateImageView(device, &info, nullptr, &m_ImageView);
+			check_vk_result(err);
+		}
+
+		// Create sampler:
+		{
+			VkSamplerCreateInfo info = {};
+			info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+			info.magFilter = VK_FILTER_LINEAR;
+			info.minFilter = VK_FILTER_LINEAR;
+			info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+			info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+			info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+			info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+			info.minLod = -1000;
+			info.maxLod = 1000;
+			info.maxAnisotropy = 1.0f;
+			VkResult err = vkCreateSampler(device, &info, nullptr, &m_Sampler);
+			check_vk_result(err);
+		}
+
+		// Create the Descriptor Set:
+		m_DescriptorSet = (VkDescriptorSet)ImGui_ImplVulkan_AddTexture(m_Sampler, m_ImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	}
+
+	void StorageImage::Release()
+	{
+		Application::SubmitResourceFree([sampler = m_Sampler, imageView = m_ImageView, image = m_Image,
+			memory = m_Memory, stagingBuffer = m_StagingBuffer, stagingBufferMemory = m_StagingBufferMemory]()
+		{
+			VkDevice device = Application::GetDevice();
+
+			vkDestroySampler(device, sampler, nullptr);
+			vkDestroyImageView(device, imageView, nullptr);
+			vkDestroyImage(device, image, nullptr);
+			vkFreeMemory(device, memory, nullptr);
+			vkDestroyBuffer(device, stagingBuffer, nullptr);
+			vkFreeMemory(device, stagingBufferMemory, nullptr);
+		});
+
+		m_Sampler = nullptr;
+		m_ImageView = nullptr;
+		m_Image = nullptr;
+		m_Memory = nullptr;
+		m_StagingBuffer = nullptr;
+		m_StagingBufferMemory = nullptr;
 	}
 
 }

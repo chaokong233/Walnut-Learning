@@ -9,13 +9,56 @@
 
 #include "imgui.h"
 #include "vulkan/vulkan.h"
+#include "myvulkan/myVulkanInclude.h"
+
+#define VULKAN_RT 1
+
+#ifdef VULKAN_RT
+	const bool useVulkanRT = true;
+#else
+	const bool useVulkanRT = false;
+#endif
+
+class ImGui_ImplVulkanH_Window;
+
+extern VkAllocationCallbacks*		g_Allocator;
+extern VkInstance					g_Instance;
+extern VkPhysicalDevice				g_PhysicalDevice;
+extern VkDevice						g_Device;
+extern uint32_t						g_QueueFamily;
+extern VkQueue						g_Queue;
+extern VkDebugReportCallbackEXT		g_DebugReport;
+extern VkPipelineCache				g_PipelineCache;
+
+extern vulkan::VulkanAllocator*		g_pVkMemoryAllocator;
+extern vulkan::CommandPool*			g_pCommandPool;
+extern vulkan::DescriptorAllocator* g_DescriptorAllocator;
+
+extern ImGui_ImplVulkanH_Window		g_MainWindowData;
+extern int							g_MinImageCount;
+extern bool							g_SwapChainRebuild;
+extern uint32_t						s_CurrentFrameIndex;
+
+extern std::vector<std::function<void()>> s_VulkanRenderFuncQueue;
 
 void check_vk_result(VkResult err);
 
 struct GLFWwindow;
 
-namespace Walnut {
+struct RayTracingScratchBuffer
+{
+	uint64_t deviceAddress = 0;
+	std::shared_ptr<vulkan::VulkanMemoryResource> buffer;
+};
 
+// Ray tracing acceleration structure
+struct AccelerationStructure {
+	VkAccelerationStructureKHR handle;
+	uint64_t deviceAddress = 0;
+	std::shared_ptr<vulkan::VulkanMemoryResource> buffer;
+};
+
+namespace Walnut {
 	struct ApplicationSpecification
 	{
 		std::string Name = "Walnut App";
@@ -26,6 +69,8 @@ namespace Walnut {
 	class Application
 	{
 	public:
+
+		//
 		Application(const ApplicationSpecification& applicationSpecification = ApplicationSpecification());
 		~Application();
 
@@ -62,6 +107,7 @@ namespace Walnut {
 	private:
 		ApplicationSpecification m_Specification;
 		GLFWwindow* m_WindowHandle = nullptr;
+
 		bool m_Running = false;
 
 		float m_TimeStep = 0.0f;

@@ -142,7 +142,7 @@ void main()
 					vec3 tangent = normalize(rayPayLoad.hitTangent);
 					vec3 bioNormal = normalize(cross(normal, tangent));
 					mat3 TBN = mat3(tangent, bioNormal, normal);
-					float NdotV = dot(viewDir, normal);
+					float NdotV = max(0.0, dot(viewDir, normal)); // 防止背面命中时传入负值进BRDF
 
 					// Next Sample
 					vec3 ggx_normal = normalize(TBN * sample_ggx(rnd2(seed), rayPayLoad.hitRoughness));
@@ -161,7 +161,7 @@ void main()
 					
 					bool faceToLight = dot(lightVec, normal) > 0;
 					float light_PDF = 0;
-					float lightDistanse = max(0.1, length(lightVec));
+					float lightDistanse = max(1e-4, length(lightVec)); // 使用更小的下限，避免光源很近时PDF被低估
 					float Light_Area = length(light.u) * length(light.v);
 
 					if(faceToLight)
@@ -261,7 +261,7 @@ void main()
 		}
 		
 		vec3 tracingColor = OutputDirectRadiance + OutputIndirectRadiance;
-		OutputRadiance = tracingColor / OutputAlbedo;
+		OutputRadiance = tracingColor / max(vec3(1e-4), OutputAlbedo); // 防止albedo=0时出现NaN/极亮firefly
 
 		averageColor = i == 0 ? tracingColor : (tracingColor / (i + 1) + averageColor * i / (i + 1));
 		averageOutputRadiance = i == 0 ? OutputRadiance : (OutputRadiance / (i + 1) + averageOutputRadiance * i / (i + 1));

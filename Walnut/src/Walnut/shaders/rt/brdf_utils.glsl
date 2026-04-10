@@ -49,12 +49,14 @@ vec3 mon2lin(vec3 x)
 
 // MIS
 // 使用GGX重要性采样在局部坐标系中采样微表面法线
+// alpha = roughness，与GTR2/brdf.glsl保持一致
 vec3 sample_ggx(vec2 xi, float roughness) {
-    float a = roughness * roughness;
+    float a = roughness;          // 与GTR2(NdotH, roughness)一致，a = roughness
+    float a2 = a * a;
     
     float phi = 2.0 * M_PI * xi.x;
-    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a*a - 1.0) * xi.y));
-    float sin_theta = sqrt(1.0 - cos_theta * cos_theta);
+    float cos_theta = sqrt((1.0 - xi.y) / (1.0 + (a2 - 1.0) * xi.y));
+    float sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta)); // max(0,…)防止浮点误差导致根号内出现微小负值
     
     // 在局部坐标系中构建微表面法线
     vec3 h;
@@ -66,18 +68,18 @@ vec3 sample_ggx(vec2 xi, float roughness) {
 }
 
 float pdf_ggx(float NdotV, float NdotH, float VdotH, float roughness) {
-    float a = roughness * roughness;
+    float a = roughness;          // 与GTR2(NdotH, roughness)一致，a = roughness
     float a2 = a * a;
     
     NdotV = max(0.0, NdotV);
     NdotH = max(0.0, NdotH);
-    VdotH = max(0.0, VdotH);
+    VdotH = max(1e-6, VdotH);    // 防止除零导致 +inf
 
-    // D_GGX项
+    // D_GGX项（与GTR2相同的参数化）
     float d = a2 / (M_PI * pow(NdotH * NdotH * (a2 - 1.0) + 1.0, 2.0));
     
-    // 转换为入射方向的PDF
-    return max(0.01, d * NdotH / (4.0 * VdotH));
+    // 转换为入射方向的PDF；下限1e-4防止极端MIS权重，同时保留比0.01更多的能量
+    return max(1e-4, d * NdotH / (4.0 * VdotH));
 }
 
 #endif

@@ -137,7 +137,7 @@ void main()
 					OutputWorldPosition = rayPayLoad.hitPosition;
 				}
 
-				// ×Ô·¢¹âÎï???
+				// ï¿½Ô·ï¿½ï¿½ï¿½ï¿½ï¿½???
 				if(rayPayLoad.isLight)
 				{			
 					if(isDirectedLight)
@@ -150,7 +150,7 @@ void main()
 					}
 					break;
 				}
-				// ¼ÆËã¹âÏßµ¯Éä
+				// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ßµï¿½ï¿½ï¿½
 				else
 				{
 					// Context
@@ -159,17 +159,18 @@ void main()
 					vec3 tangent = normalize(rayPayLoad.hitTangent);
 					vec3 bioNormal = normalize(cross(normal, tangent));
 					mat3 TBN = mat3(tangent, bioNormal, normal);
-					float NdotV = max(0.0, dot(viewDir, normal)); // ·ÀÖ¹±³ÃæÃüÖÐÊ±´«Èë¸ºÖµ½øBRDF
+					float NdotV = max(0.0, dot(viewDir, normal)); // ï¿½ï¿½Ö¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ë¸ºÖµï¿½ï¿½BRDF
 
 					origin = vec4(rayPayLoad.hitPosition + 1e-4 * normal, 1);
 
 					// Directed Light
 					// pick light
 					uint lightsCount = lightDatas.datas.areaLightCount + lightDatas.datas.radiusLightCount;
-					uint lightIdx = nrndRange(seed, 0, lightsCount-1);
-					float pick_light_PDF = 1.0 / lightsCount;
+					bool hasLights = lightsCount > 0;
+					uint lightIdx = 0;
+					float pick_light_PDF = 1.0;
 
-					uint lightType;
+					uint lightType = LIGHT_TYPE_AREA;
 					bool faceToLight = false;
 					vec3 lightOri = origin.xyz;
 					vec3 lightVec       = vec3(0.0);
@@ -180,48 +181,53 @@ void main()
 					// for radius light
 					vec3 light_Normal   = vec3(0.0);
 					float light_Radius  = 0.0;
-					// get light, process light data
-					// Area Light
-					if (lightIdx < lightDatas.datas.areaLightCount)
+					if (hasLights)
 					{
-						lightType = LIGHT_TYPE_AREA;
-
-						AreaLightData light = lightDatas.datas.areaLightData[lightIdx];		
-						lightCol = light.color;
-						// random params
-						float ru = rnd(seed);
-						float rv = rnd(seed);
-						lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
-						faceToLight = dot(lightVec, normal) > 0;
-						light_Area = length(light.u) * length(light.v);
-						light_RayDir = light.rayDir;
-					}
-					else {
-						lightIdx -= lightDatas.datas.areaLightCount;
-						// Radius Light
-						if (lightIdx < lightDatas.datas.radiusLightCount)
+						lightIdx = nrndRange(seed, 0, lightsCount - 1);
+						pick_light_PDF = 1.0 / float(lightsCount);
+						// get light, process light data
+						// Area Light
+						if (lightIdx < lightDatas.datas.areaLightCount)
 						{
-							lightType = LIGHT_TYPE_RADIUS;
+							lightType = LIGHT_TYPE_AREA;
 
-							RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
+							AreaLightData light = lightDatas.datas.areaLightData[lightIdx];		
 							lightCol = light.color;
-							float phi   = rnd(seed) * 2.0 * M_PI;
-							float cosTheta = 1.0 - 2.0 * rnd(seed);   // ¾ùÔÈ·Ö²¼ÇòÃæµÄ cos¦È
-							float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
-							vec3 lightTarget = light.centerPos + 
-								light.radius * vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
-							lightVec = lightTarget - lightOri;
-							// ²ÉÑùµã´¦ÇòÃæ·¨Ïß£¨ÏòÍâ£©
-							light_Normal = normalize(lightTarget - light.centerPos);
-							light_Radius = light.radius;
-							faceToLight = dot(lightVec, normal) > 0.0;
+							// random params
+							float ru = rnd(seed);
+							float rv = rnd(seed);
+							lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
+							faceToLight = dot(lightVec, normal) > 0;
+							light_Area = length(light.u) * length(light.v);
+							light_RayDir = light.rayDir;
+						}
+						else {
+							lightIdx -= lightDatas.datas.areaLightCount;
+							// Radius Light
+							if (lightIdx < lightDatas.datas.radiusLightCount)
+							{
+								lightType = LIGHT_TYPE_RADIUS;
+
+								RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
+								lightCol = light.color;
+								float phi   = rnd(seed) * 2.0 * M_PI;
+								float cosTheta = 1.0 - 2.0 * rnd(seed);   // ï¿½ï¿½ï¿½È·Ö²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ cosï¿½ï¿½
+								float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+								vec3 lightTarget = light.centerPos + 
+									light.radius * vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+								lightVec = lightTarget - lightOri;
+								// ï¿½ï¿½ï¿½ï¿½ï¿½ã´¦ï¿½ï¿½ï¿½æ·¨ï¿½ß£ï¿½ï¿½ï¿½ï¿½â£©
+								light_Normal = normalize(lightTarget - light.centerPos);
+								light_Radius = light.radius;
+								faceToLight = dot(lightVec, normal) > 0.0;
+							}
 						}
 					}
 
 					float lightDist = length(lightVec);
-					vec3 lightDir = lightVec / lightDist;	
+					vec3 lightDir = lightVec / max(lightDist, 1e-6);	
 
-					if(faceToLight)
+					if(faceToLight && lightDist > 1e-4)
 					{
 						
 						shadowed = true;
@@ -237,8 +243,8 @@ void main()
 							}
 							else if (lightType == LIGHT_TYPE_RADIUS)
 							{				
-								float cos_theta_y = abs(dot(-lightDir, light_Normal)); // ÈëÉä·½ÏòÓë·¨ÏßµÄ¼Ð½ÇÓàÏÒ
-								float light_PDF = (lightDist * lightDist) / max(1e-6, cos_theta_y * 4.0 * M_PI * light_Radius * light_Radius);
+								float cos_theta_y = abs(dot(-lightDir, light_Normal)); // ï¿½ï¿½ï¿½ä·½ï¿½ï¿½ï¿½ë·¨ï¿½ßµÄ¼Ð½ï¿½ï¿½ï¿½ï¿½ï¿½
+								light_PDF = (lightDist * lightDist) / max(1e-6, cos_theta_y * 4.0 * M_PI * light_Radius * light_Radius);
 							}
 
 							float cos_theta_i = dot(lightDir, normal);
@@ -280,43 +286,46 @@ void main()
 
 					float brdf_PDF = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
 					float light_PDF = 0;
-					// Compute Light PDF
-					// Pick Rect Light	
-					if (lightType == LIGHT_TYPE_AREA)
-					{	
-						AreaLightData light = lightDatas.datas.areaLightData[lightIdx];	
-						vec3 b = lightOri - light.beginPos;
-						vec3 e0 = direction;
-						float orig_detemenate = dot(cross(e0, light.u), light.v);
-						if (!(orig_detemenate == 0))
-						{
-							float t = dot(cross(b, light.u), light.v) / orig_detemenate;
-							float u = dot(cross(e0, light.v), b) / orig_detemenate;
-							float v = dot(cross(b, light.u), e0) / orig_detemenate;
-							if (u > 0 && v > 0 && u < 1 && v < 1 && t > 0)
-							{
-								float dis = length(light.beginPos + light.u * u + light.v * v - lightOri);
-								light_PDF = (dis*dis) / (max(1e-4, abs(dot(-direction, light.rayDir))) * light_Area);
-							}			
-						}
-					}
-					// Pick Radius Light	
-					else if (lightType == LIGHT_TYPE_RADIUS)
+					if (hasLights)
 					{
-						RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
-						vec3 oc = lightOri - light.centerPos;
-						float b = dot(oc, direction);
-						float c = dot(oc, oc) - light.radius * light.radius;
-						float discriminant = b*b - c;
-						if (discriminant > 0.0)
-						{
-							float t = -b - sqrt(discriminant);   // ×î½ü½»µã
-							if (t > 0.0)
+						// Compute Light PDF
+						// Pick Rect Light	
+						if (lightType == LIGHT_TYPE_AREA)
+						{	
+							AreaLightData light = lightDatas.datas.areaLightData[lightIdx];	
+							vec3 b = lightOri - light.beginPos;
+							vec3 e0 = direction;
+							float orig_detemenate = dot(cross(e0, light.u), light.v);
+							if (!(orig_detemenate == 0))
 							{
-								vec3 hitPoint = lightOri + direction * t;
-								vec3 lightNormal = normalize(hitPoint - light.centerPos);
-								float cos_theta_y = abs(dot(-direction, lightNormal));
-								light_PDF = (t * t) / max(1e-6, cos_theta_y * 4.0 * M_PI * light.radius * light.radius);
+								float t = dot(cross(b, light.u), light.v) / orig_detemenate;
+								float u = dot(cross(e0, light.v), b) / orig_detemenate;
+								float v = dot(cross(b, light.u), e0) / orig_detemenate;
+								if (u > 0 && v > 0 && u < 1 && v < 1 && t > 0)
+								{
+									float dis = length(light.beginPos + light.u * u + light.v * v - lightOri);
+									light_PDF = (dis*dis) / (max(1e-4, abs(dot(-direction, light.rayDir))) * light_Area);
+								}			
+							}
+						}
+						// Pick Radius Light	
+						else if (lightType == LIGHT_TYPE_RADIUS)
+						{
+							RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
+							vec3 oc = lightOri - light.centerPos;
+							float b = dot(oc, direction);
+							float c = dot(oc, oc) - light.radius * light.radius;
+							float discriminant = b*b - c;
+							if (discriminant > 0.0)
+							{
+								float t = -b - sqrt(discriminant);   // ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+								if (t > 0.0)
+								{
+									vec3 hitPoint = lightOri + direction * t;
+									vec3 lightNormal = normalize(hitPoint - light.centerPos);
+									float cos_theta_y = abs(dot(-direction, lightNormal));
+									light_PDF = (t * t) / max(1e-6, cos_theta_y * 4.0 * M_PI * light.radius * light.radius);
+								}
 							}
 						}
 					}
@@ -334,7 +343,7 @@ void main()
 				}
 				isFirstHit = false;
 			}
-			// ¹âÏßÒÝÉ¢???
+			// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½É¢???
 			else
 			{
 				// float y = direction.y * 0.5 + 0.5;
@@ -354,7 +363,7 @@ void main()
 		}
 		
 		vec3 tracingColor = OutputDirectRadiance + OutputIndirectRadiance;
-		OutputRadiance = tracingColor / max(vec3(1e-2), OutputAlbedo); // ·ÀÖ¹albedo=0Ê±³öÏÖNaN/¼«ÁÁfirefly
+		OutputRadiance = tracingColor / max(vec3(1e-2), OutputAlbedo); // ï¿½ï¿½Ö¹albedo=0Ê±ï¿½ï¿½ï¿½ï¿½NaN/ï¿½ï¿½ï¿½ï¿½firefly
 
 		averageOutputRadiance = i == 0 ? OutputRadiance : (OutputRadiance / (i + 1) + averageOutputRadiance * i / (i + 1));
 		averageOutputDirectRadiance = i == 0 ? OutputDirectRadiance : (OutputDirectRadiance / (i + 1) + averageOutputDirectRadiance * i / (i + 1));
@@ -363,7 +372,7 @@ void main()
 		averageOutputNormal = i == 0 ? OutputNormal : (OutputNormal / (i + 1) + averageOutputNormal * i / (i + 1));
 		averageOutputWorldPosition = i == 0 ? OutputWorldPosition : (OutputWorldPosition / (i + 1) + averageOutputWorldPosition * i / (i + 1));
 		
-		// ×ÔÊÊÓ¦²ÉÑù
+		// ï¿½ï¿½ï¿½ï¿½Ó¦ï¿½ï¿½ï¿½ï¿½
 		accumulateVariance += vec3(tracingColor.r * tracingColor.r, tracingColor.g * tracingColor.g, tracingColor.b * tracingColor.b);
 		accumulateColor += tracingColor;
 
@@ -383,4 +392,3 @@ void main()
 	imageStore(OutputNormalImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputNormal, 1));
 	imageStore(OutputWorldPositionImage, ivec2(gl_LaunchIDEXT.xy), vec4(averageOutputWorldPosition, 1));
 }
-

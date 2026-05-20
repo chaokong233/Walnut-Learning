@@ -311,12 +311,12 @@ TracingColors Renderer::Ray_Colors(const Ray& ray, int depth, RenderScene& scene
 			scatterCols.finalColor = scatterCols.finalColor.MulWithoutAlpha(inderictAttenuation);
 			// Directed Light
 			float prob;
-			// ¹âÔ´ÖØÒªÐÔ²ÉÑù£¬²ÉÑùÁÁ¶È¸ßµÄ¹âÔ´
+			// ï¿½ï¿½Ô´ï¿½ï¿½Òªï¿½Ô²ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½È¸ßµÄ¹ï¿½Ô´
 			if (auto light = scene.pickLightWeighted(prob))
 			{
 				auto sample = light->sample();
 				Color directCol;
-				// ¼ÆËã Ö±½Ó¹âÔ´µÄË¥¼õ ºÍ ·´ÉäÊ±µÄË¥¼õ£¬¿¼ÂÇÖØÒªÐÔ²ÉÑùÊ±Ñ¡È¡¹âÔ´µÄ¸ÅÂÊ£¬³ýÒÔ
+				// ï¿½ï¿½ï¿½ï¿½ Ö±ï¿½Ó¹ï¿½Ô´ï¿½ï¿½Ë¥ï¿½ï¿½ ï¿½ï¿½ ï¿½ï¿½ï¿½ï¿½Ê±ï¿½ï¿½Ë¥ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Òªï¿½Ô²ï¿½ï¿½ï¿½Ê±Ñ¡È¡ï¿½ï¿½Ô´ï¿½Ä¸ï¿½ï¿½Ê£ï¿½ï¿½ï¿½ï¿½ï¿½
 				if (CalculateDirectLightAttenuation(sample, ray, res, scene, directCol))
 				{
 					directCol = directCol / prob;
@@ -442,7 +442,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 	void Renderer::InitRayTracing()
 	{
-		// »ñÈ¡Éè±¸Ö§³ÖµÄ¹â×·ÊôÐÔ
+		// ï¿½ï¿½È¡ï¿½è±¸Ö§ï¿½ÖµÄ¹ï¿½×·ï¿½ï¿½ï¿½ï¿½
 			// Get ray tracing pipeline properties, which will be used later on in the sample
 		rayTracingPipelineProperties_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
 		VkPhysicalDeviceProperties2 deviceProperties2{};
@@ -459,7 +459,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		frameDatas_.resize(g_MinImageCount);
 
-		// ´´½¨¹â×·×ÊÔ´
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×·ï¿½ï¿½Ô´
 		createBottomLevelAccelerationStructure();
 		createTopLevelAccelerationStructure();
 		createUniformBuffer();
@@ -587,7 +587,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		accelerationStructureBuildGeometryInfo.geometryCount = geometries.size();
 		accelerationStructureBuildGeometryInfo.pGeometries = geometries.data();
 		
-		// »ñÈ¡¼ÓËÙ½á¹¹ÐèÒªµÄsize
+		// ï¿½ï¿½È¡ï¿½ï¿½ï¿½Ù½á¹¹ï¿½ï¿½Òªï¿½ï¿½size
 		VkAccelerationStructureBuildSizesInfoKHR accelerationStructureBuildSizesInfo{};
 		accelerationStructureBuildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
 		//
@@ -599,7 +599,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			maxPrimitiveCounts.data(),
 			&accelerationStructureBuildSizesInfo);
 
-		// ´´½¨¼ÓËÙ½á¹¹µÄbufferºÍscratch Buffer
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ù½á¹¹ï¿½ï¿½bufferï¿½ï¿½scratch Buffer
 		createAccelerationStructureBuffer(bottomLevelAS_, accelerationStructureBuildSizesInfo);
 
 		VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{};
@@ -608,7 +608,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		accelerationStructureCreateInfo.size = accelerationStructureBuildSizesInfo.accelerationStructureSize;
 		accelerationStructureCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
 
-		// Create ¼ÓËÙ½á¹¹
+		// Create ï¿½ï¿½ï¿½Ù½á¹¹
 		auto vkCreateAccelerationStructureKHR_Func = (PFN_vkCreateAccelerationStructureKHR)g_dynamicLoader.GetDeviceProc("vkCreateAccelerationStructureKHR");
 		vkCreateAccelerationStructureKHR_Func(g_Device, &accelerationStructureCreateInfo, nullptr, &bottomLevelAS_.handle);
 
@@ -699,7 +699,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			&primitive_count,
 			&accelerationStructureBuildSizesInfo);
 
-		// ´´½¨¼ÓËÙ½á¹¹µÄbufferºÍscratch Buffer
+		// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ù½á¹¹ï¿½ï¿½bufferï¿½ï¿½scratch Buffer
 		createAccelerationStructureBuffer(topLevelAS_, accelerationStructureBuildSizesInfo);
 
 		VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{};
@@ -707,7 +707,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		accelerationStructureCreateInfo.buffer = topLevelAS_.buffer->buffer();
 		accelerationStructureCreateInfo.size = accelerationStructureBuildSizesInfo.accelerationStructureSize;
 		accelerationStructureCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		// Create ¼ÓËÙ½á¹¹
+		// Create ï¿½ï¿½ï¿½Ù½á¹¹
 		auto vkCreateAccelerationStructureKHR_Func = (PFN_vkCreateAccelerationStructureKHR)g_dynamicLoader.GetDeviceProc("vkCreateAccelerationStructureKHR");
 		vkCreateAccelerationStructureKHR_Func(g_Device, &accelerationStructureCreateInfo, nullptr, &topLevelAS_.handle);
 
@@ -774,24 +774,30 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		}
 
-		// 
-		UniformAreaLightData lightData{};
-		lightData.lightCount = 1;
-
-		auto& light1 = lightData.data[0];
+		// Lights
+		UniformLightsData lightData{};
+		// lightData.areaLightCount = 1;
+		lightData.radiusLightCount = 1;
+		
+		auto& light1 = lightData.areaLightsData[0];
 		light1.beginPos = glm::vec3(-0.215f, 0.924f, -0.175f);
 		light1.u = glm::vec3(0.43f, 0, 0);
 		light1.v = glm::vec3(0, 0, 0.35f);
 		light1.color = glm::vec3(1.15f, 0.8f, 0.27f) * 80.0f;
 		light1.rayDir = glm::vec3(0, -1, 0);
 
+		auto& light2 = lightData.radiusLightsData[0];
+		light2.centerPos = glm::vec3(0, 0.9f, 0);
+		light2.color = glm::vec3(1.15f, 0.8f, 0.27f) * 80.0f;
+		light2.radius = 0.1f;
+
 		vulkan::VulkanLocalBuffer::CopierCreateInfo copierInfo {
 				.commandPool = g_pCommandPool,
 				.transferQueue = g_Queue
 		};
-		areaLightBuffer_ = new vulkan::VulkanLocalBuffer(g_pVkMemoryAllocator, sizeof(UniformAreaLightData),
+		lightsBuffer_ = new vulkan::VulkanLocalBuffer(g_pVkMemoryAllocator, sizeof(UniformLightsData),
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, copierInfo);
-		areaLightBuffer_->UploadMemory(&lightData, sizeof(UniformAreaLightData), 0);
+		lightsBuffer_->UploadMemory(&lightData, sizeof(UniformLightsData), 0);
 
 		// Denosie pass
 		DenoiseUniformData denoiseData{};	
@@ -842,7 +848,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		// Ray generation group
 		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut/src/Walnut/shaders/rt/raygen.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR));
+			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/raygen.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR));
 			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
 			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -855,7 +861,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		// Miss group
 		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut/src/Walnut/shaders/rt/miss.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
+			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/miss.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
 			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
 			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
@@ -865,14 +871,14 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			shaderGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
 			shaderGroups_.push_back(shaderGroup);
 					// Second shader for shadows
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut/src/Walnut/shaders/rt/shadow.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
+			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/shadow.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
 			shaderGroup.generalShader = static_cast<uint32_t>(shaderStages.size()) - 1;
 			shaderGroups_.push_back(shaderGroup);
 		}
 
 		// Closest hit group
 		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut/src/Walnut/shaders/rt/closesthit.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR));
+			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/closesthit.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR));
 			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
 			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
 			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
@@ -932,7 +938,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		vkCreatePipelineLayout(g_Device, &pipelineLayoutCI, nullptr, &denoisePipelineLayout_);
 
 		// Shader
-		VkPipelineShaderStageCreateInfo shaderStage = loadShader("E:/Git/Walnut-Learning/Walnut/src/Walnut/shaders/denoise/svgf.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+		VkPipelineShaderStageCreateInfo shaderStage = loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/denoise/svgf.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
 
 		// Pipeline
 		VkComputePipelineCreateInfo pipelineInfo{};
@@ -985,7 +991,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			writer1.write_structure(0, 1, &topLevelAS_.handle, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
 			writer1.write_buffer(6, frameDatas_[i].RTUniformBuffer_->buffer(), sizeof(CameraUniformData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 			writer1.write_buffer(7, geometryNodeBuffer_->buffer(), geometryNodeBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-			writer1.write_buffer(8, areaLightBuffer_->buffer(), areaLightBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+			writer1.write_buffer(8, lightsBuffer_->buffer(), lightsBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 			writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
 			writer1.update_set(g_Device, frameDatas_[i].rtDescriptorSet_);
 
@@ -1028,7 +1034,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 				writer2.write_image(11, lastFrameNormalImage_->GetImageView(), lastFrameNormalImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 				writer2.write_image(12, lastFrameWorldPositionImage_->GetImageView(), lastFrameWorldPositionImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
-				// ÔÚ3£¬4ºÍ1£¬2¼ä×öÆ¹ÅÒBlit
+				// ï¿½ï¿½3ï¿½ï¿½4ï¿½ï¿½1ï¿½ï¿½2ï¿½ï¿½ï¿½ï¿½Æ¹ï¿½ï¿½Blit
 				if (j == 0 || j == 2 || j == 4)
 				{
 					writer2.write_image(2, outputFinalImage_->GetImageView(), outputFinalImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
@@ -1052,7 +1058,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			delete frameDatas_[i].RTUniformBuffer_;
 			delete frameDatas_[i].DenoiseUniformBuffer_;
 		}
-		delete areaLightBuffer_;
+		delete lightsBuffer_;
 		// stb
 		delete raygenShaderBindingTable_;
 		delete missShaderBindingTable_;
@@ -1157,7 +1163,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		constexpr uint32_t Group_Size = 16;
 
-		uint32_t groupCountX = (width + Group_Size - 1) / Group_Size;  // ÏòÉÏÈ¡Õû
+		uint32_t groupCountX = (width + Group_Size - 1) / Group_Size;  // ï¿½ï¿½ï¿½ï¿½È¡ï¿½ï¿½
 		uint32_t groupCountY = (height + Group_Size - 1) / Group_Size;
 
 		// Ping-Pong Blit
@@ -1186,8 +1192,8 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		isNeedTransition = true;
 	}
 
-	// ============================== ¸¨Öúº¯Êý ===============================
-		// »ñÈ¡bufferÎïÀíµØÖ·
+	// ============================== ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ===============================
+		// ï¿½ï¿½È¡bufferï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
 	uint64_t Renderer::getBufferDeviceAddress(VkBuffer buffer)
 	{
 		VkBufferDeviceAddressInfoKHR bufferDeviceAI{};
@@ -1197,13 +1203,13 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		auto func = (PFN_vkGetBufferDeviceAddressKHR)g_dynamicLoader.GetDeviceProc("vkGetBufferDeviceAddressKHR");
 		return func(g_Device, &bufferDeviceAI);
 	}
-		// »ñÈ¡¼ÓËÙ½á¹¹ÎïÀíµØÖ·
+		// ï¿½ï¿½È¡ï¿½ï¿½ï¿½Ù½á¹¹ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½?
 	uint64_t Renderer::getAccelerationStructureDeviceAddress(VkAccelerationStructureKHR accelerationStructure)
 	{
 		VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{};
 		accelerationDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
 		accelerationDeviceAddressInfo.accelerationStructure = accelerationStructure;
-		// ¼ÓÔØº¯ÊýµØÖ·
+		// ï¿½ï¿½ï¿½Øºï¿½ï¿½ï¿½ï¿½ï¿½Ö·
 		auto func = (PFN_vkGetAccelerationStructureDeviceAddressKHR)g_dynamicLoader.GetDeviceProc("vkGetAccelerationStructureDeviceAddressKHR");
 		return func(g_Device, &accelerationDeviceAddressInfo);
 	}
@@ -1306,14 +1312,14 @@ void Camera::Tick(float ts, uint32_t width, uint32_t height)
 
 	front_ = normalize(front_);
 	// Update Screen
-	float focusMagnification = DOF_focus_distance_ / focus_distance_;	// ×îÖÕ½¹Æ½ÃæÏà¶ÔÓÚFOVÆ½ÃæµÄ·Å´ó±¶ Êý
-		// FOVÆ½Ãæ
+	float focusMagnification = DOF_focus_distance_ / focus_distance_;	// ï¿½ï¿½ï¿½Õ½ï¿½Æ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½FOVÆ½ï¿½ï¿½Ä·Å´ï¿½?? ï¿½ï¿½
+		// FOVÆ½ï¿½ï¿½
 	horizontal_ = normalize(glm::cross(front_, up_));
 	vertical_ = normalize(glm::cross(horizontal_, front_));
 	horizontal_ *= (float)width / (float)height;
 	screen_left_down_corner_ = position_ + front_ * focus_distance_ - (vertical_ + horizontal_) * .5f;
 	relative_left_down_corner_ = front_ * focus_distance_ - (vertical_ + horizontal_) * .5f;
-		// ½¹Æ½Ãæ
+		// ï¿½ï¿½Æ½ï¿½ï¿½
 	focus_vertical_ = focusMagnification * vertical_;
 	focus_horizontal_ = focusMagnification * horizontal_;
 

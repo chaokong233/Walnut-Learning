@@ -20,6 +20,7 @@ layout(binding = 6, set = 0) uniform CameraData
 
 // Light
 const uint MAX_AREA_LIGHT_NUM = 5;
+const uint MAX_RADIUS_LIGHT_NUM = 5;
 
 struct AreaLightData
 {
@@ -30,12 +31,27 @@ struct AreaLightData
 	vec3 rayDir;
 };
 
-struct UniformAreaLightData
+struct RadiusLightData
 {
-    uint lightCount;
-    AreaLightData data[MAX_AREA_LIGHT_NUM];
+    vec3 centerPos;
+	float padding1;
+    vec3 color;
+	float padding2;
+    float radius;
+	vec3 padding3;
 };
-layout(binding = 8, set = 0) buffer AreaLights { UniformAreaLightData lightData; } areaLights;
+
+struct UniformLightData
+{
+    uint areaLightCount;
+    AreaLightData areaLightData[MAX_AREA_LIGHT_NUM];
+	uint radiusLightCount;
+    RadiusLightData radiusLightData[MAX_RADIUS_LIGHT_NUM];
+};
+layout(binding = 8, set = 0) buffer Lights { UniformLightData datas; } lightDatas;
+
+#define LIGHT_TYPE_AREA 0
+#define LIGHT_TYPE_RADIUS 1
 
 struct RayPayload {
 	vec3 hitPosition;
@@ -60,13 +76,12 @@ layout(location = 2) rayPayloadEXT bool shadowed;
 void main() 
 {
 	const uint MAX_RAY_DEPTH = 8;
-	const float MIN_RENDER_NOISE_THRESHOLD = 0.002; 
-	const int MIN_NUM_RENDER_SAMPLES = 4;
+	const float MIN_RENDER_NOISE_THRESHOLD = 0.005; 
+	const int MIN_NUM_RENDER_SAMPLES = 16;
 
 	float tmin = 0.001;
 	float tmax = 10000.0;
 
-	vec3 averageColor = vec3(0.0);
 
 	vec3 averageOutputRadiance = vec3(0);
 	vec3 averageOutputDirectRadiance = vec3(0);
@@ -75,7 +90,9 @@ void main()
 	vec3 averageOutputNormal = vec3(0);
 	vec3 averageOutputWorldPosition = vec3(0);
 
-	float accumulateVariance = 0;
+	// for denoise
+	vec3 accumulateVariance = vec3(0.0);
+	vec3 accumulateColor = vec3(0.0);
 
 	uint seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x, cam.frame);
 
@@ -120,7 +137,7 @@ void main()
 					OutputWorldPosition = rayPayLoad.hitPosition;
 				}
 
-				// Ëá™ÂèëÂÖâÁâ©‰Ωì
+				// ◊‘∑¢π‚ŒÔ???
 				if(rayPayLoad.isLight)
 				{			
 					if(isDirectedLight)
@@ -133,7 +150,7 @@ void main()
 					}
 					break;
 				}
-				// ËÆ°ÁÆóÂÖâÁ∫øÂºπÂ∞Ñ
+				// º∆À„π‚œﬂµØ…‰
 				else
 				{
 					// Context
@@ -142,66 +159,115 @@ void main()
 					vec3 tangent = normalize(rayPayLoad.hitTangent);
 					vec3 bioNormal = normalize(cross(normal, tangent));
 					mat3 TBN = mat3(tangent, bioNormal, normal);
-					float NdotV = max(0.0, dot(viewDir, normal)); // Èò≤Ê≠¢ËÉåÈù¢ÂëΩ‰∏≠Êó∂‰º†ÂÖ•Ë¥üÂÄºËøõBRDF
-
-					// Next Sample
-					vec3 ggx_normal = normalize(TBN * sample_ggx(rnd2(seed), rayPayLoad.hitRoughness));
-					direction = normalize(reflect(direction, ggx_normal));
-					bool goodSample = dot(direction, normal) > 0;
-
+					float NdotV = max(0.0, dot(viewDir, normal)); // ∑¿÷π±≥√Ê√¸÷– ±¥´»Î∏∫÷µΩ¯BRDF
 
 					origin = vec4(rayPayLoad.hitPosition + 1e-4 * normal, 1);
 
 					// Directed Light
-					AreaLightData light = areaLights.lightData.data[0];
+					// pick light
+					uint lightsCount = lightDatas.datas.areaLightCount + lightDatas.datas.radiusLightCount;
+					uint lightIdx = nrndRange(seed, 0, lightsCount-1);
+					float pick_light_PDF = 1.0 / lightsCount;
+
+					uint lightType;
+					bool faceToLight = false;
 					vec3 lightOri = origin.xyz;
-					float ru = rnd(seed);
-					float rv = rnd(seed);
-					vec3 lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
-					
-					bool faceToLight = dot(lightVec, normal) > 0;
-					float light_PDF = 0;
-					float lightDistanse = max(1e-4, length(lightVec)); // ‰ΩøÁî®Êõ¥Â∞èÁöÑ‰∏ãÈôêÔºåÈÅøÂÖçÂÖâÊ∫êÂæàËøëÊó∂PDFË¢´‰Ωé‰º∞
-					float Light_Area = length(light.u) * length(light.v);
+					vec3 lightVec       = vec3(0.0);
+					vec3 lightCol       = vec3(0.0);
+					// for area light
+					vec3 light_RayDir   = vec3(0.0);
+					float light_Area    = 0.0;
+					// for radius light
+					vec3 light_Normal   = vec3(0.0);
+					float light_Radius  = 0.0;
+					// get light, process light data
+					// Area Light
+					if (lightIdx < lightDatas.datas.areaLightCount)
+					{
+						lightType = LIGHT_TYPE_AREA;
+
+						AreaLightData light = lightDatas.datas.areaLightData[lightIdx];		
+						lightCol = light.color;
+						// random params
+						float ru = rnd(seed);
+						float rv = rnd(seed);
+						lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
+						faceToLight = dot(lightVec, normal) > 0;
+						light_Area = length(light.u) * length(light.v);
+						light_RayDir = light.rayDir;
+					}
+					else {
+						lightIdx -= lightDatas.datas.areaLightCount;
+						// Radius Light
+						if (lightIdx < lightDatas.datas.radiusLightCount)
+						{
+							lightType = LIGHT_TYPE_RADIUS;
+
+							RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
+							lightCol = light.color;
+							float phi   = rnd(seed) * 2.0 * M_PI;
+							float cosTheta = 1.0 - 2.0 * rnd(seed);   // æ˘‘»∑÷≤º«Ú√Êµƒ cos¶»
+							float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+							vec3 lightTarget = light.centerPos + 
+								light.radius * vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+							lightVec = lightTarget - lightOri;
+							// ≤…—˘µ„¥¶«Ú√Ê∑®œﬂ£®œÚÕ‚£©
+							light_Normal = normalize(lightTarget - light.centerPos);
+							light_Radius = light.radius;
+							faceToLight = dot(lightVec, normal) > 0.0;
+						}
+					}
+
+					float lightDist = length(lightVec);
+					vec3 lightDir = lightVec / lightDist;	
 
 					if(faceToLight)
 					{
+						
 						shadowed = true;
 						traceRayEXT(topLevelAS, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xFF,
-									0, 0, 1, lightOri, 0, lightVec, 0.99, 2);
+									0, 0, 1, lightOri, 1e-4, lightDir, lightDist - 1e-4, 2);
 						if(!shadowed)
-						{				
-							lightVec = normalize(lightVec);
-							light_PDF = (lightDistanse*lightDistanse) / (max(0.01, abs(dot(-lightVec, light.rayDir))) * Light_Area);
-							float cos_theta_i = dot(lightVec, normal);
-							// Âπ≥ÂàÜÂÖâÁ∫øÂΩ±Âìç
-							// tracingAttenuation *= 0.5;
+						{	
+							float light_PDF;
+							// Compute Light PDF
+							if (lightType == LIGHT_TYPE_AREA)
+							{	
+								light_PDF = (lightDist*lightDist) / (max(1e-4, abs(dot(-lightDir, light_RayDir))) * light_Area);
+							}
+							else if (lightType == LIGHT_TYPE_RADIUS)
+							{				
+								float cos_theta_y = abs(dot(-lightDir, light_Normal)); // »Î…‰∑ΩœÚ”Î∑®œﬂµƒº–Ω«”‡œ“
+								float light_PDF = (lightDist * lightDist) / max(1e-6, cos_theta_y * 4.0 * M_PI * light_Radius * light_Radius);
+							}
 
+							float cos_theta_i = dot(lightDir, normal);
 							// BRDF Context
-							float NdotL = dot(lightVec, normal);
-							vec3 H_Dir = normalize(lightVec + viewDir);
-							float LdotH = dot(lightVec, H_Dir);
+							float NdotL = dot(lightDir, normal);
+							vec3 H_Dir = normalize(lightDir + viewDir);
+							float LdotH = dot(lightDir, H_Dir);
 							float NdotH = dot(normal, H_Dir);
 
-							// Compute
+							// Compute BRDF
 							#include "brdf.glsl"
 
 							float brdf_PDF = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
-							float weight_MIS = light_PDF*light_PDF  / (light_PDF*light_PDF + brdf_PDF*brdf_PDF);
+							//float weight_MIS = light_PDF*light_PDF  / (light_PDF*light_PDF + brdf_PDF*brdf_PDF);
+							float weight_MIS = light_PDF  / (light_PDF + brdf_PDF);
 
-							vec3 lightingRadiance = light.color * tracingAttenuation * BRDF_Final_Attenuation * cos_theta_i * weight_MIS / light_PDF;
+							vec3 lightingRadiance = lightCol * tracingAttenuation * BRDF_Final_Attenuation * cos_theta_i * weight_MIS / (light_PDF * pick_light_PDF);
 							// Accumulate Color
 							if(isDirectedLight)
-							{
-								OutputDirectRadiance += lightingRadiance;
-							}		
+								OutputDirectRadiance += lightingRadiance;	
 							else
-							{
 								OutputIndirectRadiance += lightingRadiance;
-							}
 						}
 					}
-					if(!goodSample) break;
+
+					// Next Sample
+					vec3 ggx_normal = normalize(TBN * sample_ggx(rnd2(seed), rayPayLoad.hitRoughness));
+					direction = normalize(reflect(direction, ggx_normal));
+					if(dot(direction, normal) <= 0) break;
 
 					// BRDF Context
 					float NdotL = dot(direction, normal);
@@ -209,30 +275,57 @@ void main()
 					float LdotH = dot(direction, H_Dir);
 					float NdotH = dot(normal, H_Dir);
 
-					// Compute
+					// Compute BRDF
 					#include "brdf.glsl"
 
-					float brdf_pdf = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
-					float light_PDF_01 = 0;
-					// Hit Rect Light	
-					vec3 b = lightOri - light.beginPos;
-					vec3 e0 = direction;
-					float orig_detemenate = dot(cross(e0, light.u), light.v);
-					if (!(orig_detemenate == 0))
-					{
-						float t = dot(cross(b, light.u), light.v) / orig_detemenate;
-						float u = dot(cross(e0, light.v), b) / orig_detemenate;
-						float v = dot(cross(b, light.u), e0) / orig_detemenate;
-						if (u > 0 && v > 0 && u < 1 && v < 1 && t > 0)
+					float brdf_PDF = pdf_ggx(NdotV, NdotH, dot(viewDir, H_Dir), rayPayLoad.hitRoughness);
+					float light_PDF = 0;
+					// Compute Light PDF
+					// Pick Rect Light	
+					if (lightType == LIGHT_TYPE_AREA)
+					{	
+						AreaLightData light = lightDatas.datas.areaLightData[lightIdx];	
+						vec3 b = lightOri - light.beginPos;
+						vec3 e0 = direction;
+						float orig_detemenate = dot(cross(e0, light.u), light.v);
+						if (!(orig_detemenate == 0))
 						{
-							float dis = length(light.beginPos + light.u * u + light.v * v - lightOri);
-							light_PDF_01 = (dis*dis) / (max(0.01, abs(dot(-direction, light.rayDir))) * Light_Area);
-						}			
+							float t = dot(cross(b, light.u), light.v) / orig_detemenate;
+							float u = dot(cross(e0, light.v), b) / orig_detemenate;
+							float v = dot(cross(b, light.u), e0) / orig_detemenate;
+							if (u > 0 && v > 0 && u < 1 && v < 1 && t > 0)
+							{
+								float dis = length(light.beginPos + light.u * u + light.v * v - lightOri);
+								light_PDF = (dis*dis) / (max(1e-4, abs(dot(-direction, light.rayDir))) * light_Area);
+							}			
+						}
 					}
-					float weight_MIS = brdf_pdf*brdf_pdf / (light_PDF_01*light_PDF_01 + brdf_pdf*brdf_pdf);
+					// Pick Radius Light	
+					else if (lightType == LIGHT_TYPE_RADIUS)
+					{
+						RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
+						vec3 oc = lightOri - light.centerPos;
+						float b = dot(oc, direction);
+						float c = dot(oc, oc) - light.radius * light.radius;
+						float discriminant = b*b - c;
+						if (discriminant > 0.0)
+						{
+							float t = -b - sqrt(discriminant);   // ◊ÓΩ¸Ωªµ„
+							if (t > 0.0)
+							{
+								vec3 hitPoint = lightOri + direction * t;
+								vec3 lightNormal = normalize(hitPoint - light.centerPos);
+								float cos_theta_y = abs(dot(-direction, lightNormal));
+								light_PDF = (t * t) / max(1e-6, cos_theta_y * 4.0 * M_PI * light.radius * light.radius);
+							}
+						}
+					}
+
+					//float weight_MIS = brdf_PDF*brdf_PDF / (light_PDF*light_PDF + brdf_PDF*brdf_PDF);
+					float weight_MIS = brdf_PDF / (light_PDF + brdf_PDF);
 					
 					float cos_theta_i = dot(direction, normal);
-					tracingAttenuation *= BRDF_Final_Attenuation * cos_theta_i * weight_MIS / brdf_pdf;				
+					tracingAttenuation *= BRDF_Final_Attenuation * cos_theta_i * weight_MIS / brdf_PDF;				
 				}
 
 				if(!isFirstHit)
@@ -241,7 +334,7 @@ void main()
 				}
 				isFirstHit = false;
 			}
-			// ÂÖâÁ∫øÈÄ∏Êï£Êó∂
+			// π‚œﬂ“›…¢???
 			else
 			{
 				// float y = direction.y * 0.5 + 0.5;
@@ -261,9 +354,8 @@ void main()
 		}
 		
 		vec3 tracingColor = OutputDirectRadiance + OutputIndirectRadiance;
-		OutputRadiance = tracingColor / max(vec3(1e-4), OutputAlbedo); // Èò≤Ê≠¢albedo=0Êó∂Âá∫Áé∞NaN/ÊûÅ‰∫Æfirefly
+		OutputRadiance = tracingColor / max(vec3(1e-2), OutputAlbedo); // ∑¿÷πalbedo=0 ±≥ˆœ÷NaN/º´¡¡firefly
 
-		averageColor = i == 0 ? tracingColor : (tracingColor / (i + 1) + averageColor * i / (i + 1));
 		averageOutputRadiance = i == 0 ? OutputRadiance : (OutputRadiance / (i + 1) + averageOutputRadiance * i / (i + 1));
 		averageOutputDirectRadiance = i == 0 ? OutputDirectRadiance : (OutputDirectRadiance / (i + 1) + averageOutputDirectRadiance * i / (i + 1));
 		averageOutputIndirectRadiance = i == 0 ? OutputIndirectRadiance : (OutputIndirectRadiance / (i + 1) + averageOutputIndirectRadiance * i / (i + 1));
@@ -271,13 +363,16 @@ void main()
 		averageOutputNormal = i == 0 ? OutputNormal : (OutputNormal / (i + 1) + averageOutputNormal * i / (i + 1));
 		averageOutputWorldPosition = i == 0 ? OutputWorldPosition : (OutputWorldPosition / (i + 1) + averageOutputWorldPosition * i / (i + 1));
 		
-		// Ëá™ÈÄÇÂ∫îÈááÊ†∑
-		accumulateVariance += dot(tracingColor - averageColor, tracingColor - averageColor);
+		// ◊‘  ”¶≤…—˘
+		accumulateVariance += vec3(tracingColor.r * tracingColor.r, tracingColor.g * tracingColor.g, tracingColor.b * tracingColor.b);
+		accumulateColor += tracingColor;
 
-		if(i >= MIN_NUM_RENDER_SAMPLES)
+ 		if(i >= MIN_NUM_RENDER_SAMPLES)
 		{	
-			float noise = accumulateVariance / ((i - 1) * sqrt(i));
-			float norm = min(2.0, length(tracingColor));
+			vec3 averageColor = accumulateColor / (i+1);
+			vec3 noiseVec3 = accumulateVariance / (i+1) - averageColor * averageColor; // D(X) = E(X^2) - E(X)^2
+			float noise = noiseVec3.r + noiseVec3.g + noiseVec3.b;
+			float norm = min(1.0, length(averageColor));
 			float normalizeNoise = norm < 1e-6 ? 0 : noise / norm;
 			if (normalizeNoise < MIN_RENDER_NOISE_THRESHOLD) break;
 		}

@@ -38,6 +38,7 @@ struct DenoiseCameraUniformData
 };
 
 const uint32_t MAX_AREA_LIGHT_NUM = 5;
+const uint32_t MAX_RADIUS_LIGHT_NUM = 5;
 
 struct AreaLightData
 {
@@ -48,10 +49,19 @@ struct AreaLightData
     alignas(16) glm::vec3 rayDir;
 };
 
-struct UniformAreaLightData
+struct RadiusLightData
 {
-    alignas(16) uint32_t lightCount{ 0 };
-    AreaLightData data[MAX_AREA_LIGHT_NUM];
+    alignas(16) glm::vec3 centerPos;
+    alignas(16) glm::vec3 color;
+    alignas(16) float radius;
+};
+
+struct UniformLightsData 
+{
+    alignas(16) uint32_t areaLightCount{ 0 };
+     AreaLightData areaLightsData[MAX_AREA_LIGHT_NUM];
+	alignas(16) uint32_t radiusLightCount{ 0 };
+     RadiusLightData radiusLightsData[MAX_RADIUS_LIGHT_NUM];
 };
 
 
@@ -237,7 +247,7 @@ private:
 
 	vulkan::VulkanMemoryResource* transformBuffer_;
 	vulkan::VulkanLocalBuffer* geometryNodeBuffer_;
-	vulkan::VulkanLocalBuffer* areaLightBuffer_;
+	vulkan::VulkanLocalBuffer* lightsBuffer_;
 	// 
 	std::vector<FrameData> frameDatas_;
 	

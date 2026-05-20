@@ -47,7 +47,7 @@ vec3 BRDF_Final_Attenuation = (1/M_PI) * Fd*Cdlin * (1 - metallic)
 // BRDF_Final_Attenuation = clamp(BRDF_Final_Attenuation, vec3(0), vec3(1));
 
 //===============================================
-#ifdef asdarqwr
+#ifdef aniso_brdf
 float NdotL = dot(N,L);
 float NdotV = dot(N,V);
 if (NdotL < 0 || NdotV < 0) return vec3(0);

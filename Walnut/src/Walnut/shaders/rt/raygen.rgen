@@ -137,7 +137,7 @@ void main()
 					OutputWorldPosition = rayPayLoad.hitPosition;
 				}
 
-				// �Է�����???
+				// 命中发光体
 				if(rayPayLoad.isLight)
 				{			
 					if(isDirectedLight)
@@ -150,7 +150,7 @@ void main()
 					}
 					break;
 				}
-				// ������ߵ���
+				// 命中普通几何体
 				else
 				{
 					// Context
@@ -159,7 +159,7 @@ void main()
 					vec3 tangent = normalize(rayPayLoad.hitTangent);
 					vec3 bioNormal = normalize(cross(normal, tangent));
 					mat3 TBN = mat3(tangent, bioNormal, normal);
-					float NdotV = max(0.0, dot(viewDir, normal)); // ��ֹ��������ʱ���븺ֵ��BRDF
+					float NdotV = max(0.0, dot(viewDir, normal)); // 防止掠射时给 BRDF 传入负值
 
 					origin = vec4(rayPayLoad.hitPosition + 1e-4 * normal, 1);
 
@@ -210,12 +210,12 @@ void main()
 
 								RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
 								float phi   = rnd(seed) * 2.0 * M_PI;
-								float cosTheta = 1.0 - 2.0 * rnd(seed);   // ���ȷֲ������ cos��
+								float cosTheta = 1.0 - 2.0 * rnd(seed);   // 均匀分布采样球面余弦
 								float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
 								vec3 lightTarget = light.centerPos + 
 									light.radius * vec3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
 								lightVec = lightTarget - lightOri;
-								// �����㴦���淨�ߣ����⣩
+								// 采样点处的球面法线（单位向量）
 								light_Normal = normalize(lightTarget - light.centerPos);
 								light_Radius = light.radius;
 								lightCol = light.color / (light_Radius*light_Radius);
@@ -243,7 +243,7 @@ void main()
 							}
 							else if (lightType == LIGHT_TYPE_RADIUS)
 							{				
-								float cos_theta_y = abs(dot(-lightDir, light_Normal)); // ���䷽���뷨�ߵļн�����
+								float cos_theta_y = abs(dot(-lightDir, light_Normal)); // 入射方向与法线夹角余弦
 								light_PDF = (lightDist * lightDist) / max(1e-6, cos_theta_y * 4.0 * M_PI * light_Radius * light_Radius);
 							}
 
@@ -318,7 +318,7 @@ void main()
 							float discriminant = b*b - c;
 							if (discriminant > 0.0)
 							{
-								float t = -b - sqrt(discriminant);   // �������
+								float t = -b - sqrt(discriminant);   // 取最近交点
 								if (t > 0.0)
 								{
 									vec3 hitPoint = lightOri + direction * t;
@@ -343,7 +343,7 @@ void main()
 				}
 				isFirstHit = false;
 			}
-			// ������ɢ???
+			// 未命中场景（环境）
 			else
 			{
 				// float y = direction.y * 0.5 + 0.5;
@@ -363,7 +363,7 @@ void main()
 		}
 		
 		vec3 tracingColor = OutputDirectRadiance + OutputIndirectRadiance;
-		OutputRadiance = tracingColor / max(vec3(1e-2), OutputAlbedo); // ��ֹalbedo=0ʱ����NaN/����firefly
+		OutputRadiance = tracingColor / max(vec3(1e-2), OutputAlbedo); // 防止 albedo=0 时出现 NaN/火花噪点
 
 		averageOutputRadiance = i == 0 ? OutputRadiance : (OutputRadiance / (i + 1) + averageOutputRadiance * i / (i + 1));
 		averageOutputDirectRadiance = i == 0 ? OutputDirectRadiance : (OutputDirectRadiance / (i + 1) + averageOutputDirectRadiance * i / (i + 1));
@@ -372,7 +372,7 @@ void main()
 		averageOutputNormal = i == 0 ? OutputNormal : (OutputNormal / (i + 1) + averageOutputNormal * i / (i + 1));
 		averageOutputWorldPosition = i == 0 ? OutputWorldPosition : (OutputWorldPosition / (i + 1) + averageOutputWorldPosition * i / (i + 1));
 		
-		// ����Ӧ����
+		// 自适应采样
 		accumulateVariance += vec3(tracingColor.r * tracingColor.r, tracingColor.g * tracingColor.g, tracingColor.b * tracingColor.b);
 		accumulateColor += tracingColor;
 

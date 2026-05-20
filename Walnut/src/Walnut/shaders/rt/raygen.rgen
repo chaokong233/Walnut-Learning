@@ -192,13 +192,13 @@ void main()
 							lightType = LIGHT_TYPE_AREA;
 
 							AreaLightData light = lightDatas.datas.areaLightData[lightIdx];		
-							lightCol = light.color;
 							// random params
 							float ru = rnd(seed);
 							float rv = rnd(seed);
 							lightVec = light.beginPos + light.u * ru + light.v * rv - lightOri;
 							faceToLight = dot(lightVec, normal) > 0;
 							light_Area = length(light.u) * length(light.v);
+							lightCol = light.color / light_Area;
 							light_RayDir = light.rayDir;
 						}
 						else {
@@ -209,7 +209,6 @@ void main()
 								lightType = LIGHT_TYPE_RADIUS;
 
 								RadiusLightData light = lightDatas.datas.radiusLightData[lightIdx];
-								lightCol = light.color;
 								float phi   = rnd(seed) * 2.0 * M_PI;
 								float cosTheta = 1.0 - 2.0 * rnd(seed);   // ���ȷֲ������ cos��
 								float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
@@ -219,6 +218,7 @@ void main()
 								// �����㴦���淨�ߣ����⣩
 								light_Normal = normalize(lightTarget - light.centerPos);
 								light_Radius = light.radius;
+								lightCol = light.color / (light_Radius*light_Radius);
 								faceToLight = dot(lightVec, normal) > 0.0;
 							}
 						}

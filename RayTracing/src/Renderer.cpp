@@ -787,9 +787,9 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		light1.rayDir = glm::vec3(0, -1, 0);
 
 		auto& light2 = lightData.radiusLightsData[0];
-		light2.centerPos = glm::vec3(0, 0.9f, 0);
-		light2.color = glm::vec3(1.15f, 0.8f, 0.27f) * 80.0f;
-		light2.radius = 0.1f;
+		light2.centerPos = glm::vec3(0, 0.8f, 0);
+		light2.color = glm::vec3(1.15f, 0.8f, 0.27f) * 1.0f;
+		light2.radius = 0.15f;
 
 		vulkan::VulkanLocalBuffer::CopierCreateInfo copierInfo {
 				.commandPool = g_pCommandPool,

@@ -48,6 +48,11 @@ float rndRange(inout uint previous, float minf, float maxf)
     return mix(minf, maxf, rnd(previous));
 }
 
+uint nrndRange(inout uint previous, uint minn, uint maxn)
+{
+    return uint(floor(rnd(previous) * (maxn - minn + 1)) + minn);
+}
+
 vec3 unitSph(inout uint previous)
 {
     float a = rndRange(previous, 0, 2 * M_PI);

@@ -182,6 +182,15 @@ void main()
     vec3 pixelNormal = imageLoad(nowFrameNormalImage_, globalID).xyz;
     vec3 pixelPosition = imageLoad(nowFrameWorldPositionImage_, globalID).xyz;
     vec3 pixelRandiance = ClampColor(imageLoad(nowFrameRadianceImage_, globalID).xyz);
+    // 中心像素辐照度NaN保护：若raygen中出现除零（如albedo=0），NaN会污染整行权重计算
+    if(isnan(pixelRandiance.x) || isnan(pixelRandiance.y) || isnan(pixelRandiance.z))
+        pixelRandiance = vec3(0);
+
+    // 读取当前帧方差，用于自适应辐照度权重（方差大→权重更宽松，允许更多跨像素混合）
+    float pixelVariance = max(0.0, imageLoad(nowFrameVarianceImage_, globalID).r);
+    // baseline=1.0：当方差图未填充（全零）时退化为固定sigma_r滤波，行为与原代码一致；
+    // +1e-8防止SIGMA_RANDIANCE意外为0时除零
+    float varianceFactor = sqrt(pixelVariance) + 1.0 + 1e-8;
 
     // 遍历核窗口
     for(int i = 0; i < 9; i++)
@@ -197,9 +206,12 @@ void main()
                 sampleCol = vec3(0);
             }
 
-            float weightNormal = max(pow(max(0, dot(imageLoad(nowFrameNormalImage_, sampleCoord).xyz, pixelNormal)), SIGMA_NORMAL), 1e-4);
+            // weightNormal：点积为负（法线反向）时权重为0，避免边界漏光
+            float cosN = dot(imageLoad(nowFrameNormalImage_, sampleCoord).xyz, pixelNormal);
+            float weightNormal = cosN <= 0.0 ? 0.0 : max(pow(cosN, SIGMA_NORMAL), 1e-4);
             float weightDepth = exp(-1 * abs(dot(imageLoad(nowFrameWorldPositionImage_, sampleCoord).xyz - pixelPosition, pixelNormal)) * SIGMA_DEPTH);
-            float weightRadiance = exp(-1 * abs(CIELength(sampleCol, pixelRandiance)) / (SIGMA_RANDIANCE * 1 + 1e-8));
+            // 辐照度权重分母加入方差因子：噪声大时滤波核更宽，收敛后保留细节
+            float weightRadiance = exp(-1 * abs(CIELength(sampleCol, pixelRandiance)) / (SIGMA_RANDIANCE * varianceFactor));
             float weight = weightNormal * weightDepth * weightRadiance;
             colorSum += sampleCol * weight;
             weightSum += weight;          

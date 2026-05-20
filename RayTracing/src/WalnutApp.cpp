@@ -117,7 +117,7 @@ public:
 		// Renderer
 		ImGui::LabelText("", "Ray Tracing Info:");
 
-		// 计算帧率，自适应时间
+		// 锟斤拷锟斤拷帧锟绞ｏ拷锟斤拷锟斤拷应时锟斤拷
 		float elapsed = timer.ElapsedMillis();
 		accumulateTime += elapsed;
 		accumulateFrameCount++;

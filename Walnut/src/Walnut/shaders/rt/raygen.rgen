@@ -183,7 +183,7 @@ void main()
 					float light_Radius  = 0.0;
 					if (hasLights)
 					{
-						lightIdx = nrndRange(seed, 0, lightsCount - 1);
+						lightIdx = lightsCount == 1 ? 0 : nrndRange(seed, 0, lightsCount - 1);
 						pick_light_PDF = 1.0 / float(lightsCount);
 						// get light, process light data
 						// Area Light

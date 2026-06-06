@@ -124,53 +124,6 @@ struct TracingColors
 	}
 };
 
-#ifndef VULKAN_RT
-class Renderer
-{
-public:
-	Renderer();
-	Renderer(uint32_t width, uint32_t height);
-	~Renderer();
-
-	void OnResize(uint32_t width, uint32_t height);
-	void Render(Camera& camera, RenderScene& scene, bool isAdaptiveNoise = true, bool isDenoise = false);
-	TracingColors Ray_Colors(const Ray& ray, int depth, RenderScene& scene, bool isFirstHit = false);
-	bool CalculateDirectLightAttenuation(const LightSample& lightSample, const Ray& ray_in, const HitResult& hitres, RenderScene& scene, Color& resColor);
-
-	inline std::shared_ptr<Walnut::Image> GetFinalImage() const { return finalImage_; }
-	inline std::shared_ptr<Walnut::Image> GetNormalImage() const { return normalImage_; }
-	inline std::shared_ptr<Walnut::Image> GetAlbedoImage() const { return albedoImage_; }
-	inline void SetMaxRenderSampleCount(uint32_t count) { max_render_samples_per_pixel_ = count; }
-	inline void SetMinRenderSampleCount(uint32_t count) { min_render_samples_per_pixel_ = count; }
-	inline void SetMinRenderNoiseThreshold(double threshold) { min_render_noise_threshold = threshold; }
-	inline void SetMaxPreviewSampleCount(uint32_t count) { max_preview_samples_per_pixel_ = count; }
-	inline void SetMaxBounceCount(uint32_t count) { max_bounce_count_ = count; }
-	inline void SetUseMT(bool use) { use_MT_Acceleration_ = use; }
-
-private:
-	// For Denoise
-	std::shared_ptr<Walnut::Image> albedoImage_;
-	std::shared_ptr<Walnut::Image> normalImage_;
-	std::shared_ptr<Walnut::Image> finalImage_;
-
-	uint32_t* finalImageData_ {nullptr};
-	uint32_t* normalImageData_ {nullptr};
-	uint32_t* albedoImageData_ {nullptr};
-
-	Denoiser denoiser_;
-	// 
-	uint32_t max_bounce_count_ = 4;
-	uint32_t max_render_samples_per_pixel_ = Default_Max_Render_Samples_Per_Pixel;
-	uint32_t min_render_samples_per_pixel_ = Default_Min_Render_Samples_Per_Pixel;
-	uint32_t max_preview_samples_per_pixel_ = Default_Max_Preview_Samples_Per_Pixel;
-	double min_render_noise_threshold = Default_Render_Noise_Threshold;
-	// MT
-	bool use_MT_Acceleration_ = true;
-	std::vector<uint32_t> MT_Vertical_Iter;
-};
-
-#else
-
 class Renderer
 {
 public:
@@ -295,8 +248,6 @@ private:
 	VkPipelineShaderStageCreateInfo loadShader(std::string fileName, VkShaderStageFlagBits stage);
 
 };
-
-#endif
 
 class Camera
 {

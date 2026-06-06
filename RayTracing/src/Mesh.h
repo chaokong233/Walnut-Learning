@@ -1,6 +1,6 @@
 #pragma once
 #include "Ray_Hittable.h"
-#include "walnut/Application.h"
+#include "Walnut/Application.h"
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>

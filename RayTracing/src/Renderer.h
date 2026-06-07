@@ -8,6 +8,10 @@
 #include "Ray_Hittable.h"
 #include "Denoiser.h"
 
+#ifdef VULKAN_RT
+#include "VulkanRTBackend.h"
+#endif
+
 // Default
 #define Default_Max_Render_Samples_Per_Pixel 1
 #define Default_Min_Render_Samples_Per_Pixel 4
@@ -215,17 +219,6 @@ private:
 
 private:
 	std::shared_ptr<RTModel> model_;
-	// Utils
-	//PFN_vkGetBufferDeviceAddressKHR vkGetBufferDeviceAddressKHR;
-	//PFN_vkCreateAccelerationStructureKHR vkCreateAccelerationStructureKHR;
-	//PFN_vkDestroyAccelerationStructureKHR vkDestroyAccelerationStructureKHR;
-	//PFN_vkGetAccelerationStructureBuildSizesKHR vkGetAccelerationStructureBuildSizesKHR;
-	//PFN_vkGetAccelerationStructureDeviceAddressKHR vkGetAccelerationStructureDeviceAddressKHR;
-	//PFN_vkCmdBuildAccelerationStructuresKHR vkCmdBuildAccelerationStructuresKHR;
-	//PFN_vkBuildAccelerationStructuresKHR vkBuildAccelerationStructuresKHR;
-	//PFN_vkCmdTraceRaysKHR vkCmdTraceRaysKHR;
-	//PFN_vkGetRayTracingShaderGroupHandlesKHR vkGetRayTracingShaderGroupHandlesKHR;
-	//PFN_vkCreateRayTracingPipelinesKHR vkCreateRayTracingPipelinesKHR;
 
 	struct FrameData
 	{
@@ -239,11 +232,10 @@ private:
 	bool isNeedTransition = false;
 	uint32_t nowFrameCount{ 0 };
 
-	VkPhysicalDeviceRayTracingPipelinePropertiesKHR  rayTracingPipelineProperties_{};
-	VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures_{};
+	std::unique_ptr<rt::VulkanRTBackend> rtBackend_;
 
-	AccelerationStructure bottomLevelAS_{};
-	AccelerationStructure topLevelAS_{};
+	rt::AccelerationStructure bottomLevelAS_{};
+	rt::AccelerationStructure topLevelAS_{};
 
 	vulkan::VulkanMemoryResource* transformBuffer_;
 	vulkan::VulkanLocalBuffer* geometryNodeBuffer_;
@@ -251,13 +243,10 @@ private:
 	// 
 	std::vector<FrameData> frameDatas_;
 	
-	std::vector<VkRayTracingShaderGroupCreateInfoKHR> shaderGroups_ {};
-	vulkan::VulkanMemoryResource* raygenShaderBindingTable_;
-	vulkan::VulkanMemoryResource* missShaderBindingTable_;
-	vulkan::VulkanMemoryResource* hitShaderBindingTable_;
+	rt::ShaderBindingTable shaderBindingTable_;
 
 	// Ray Tracing Pass
-	VkPipeline rtPipeline_;
+	rt::RTPipeline rtPipeline_;
 	VkPipelineLayout rtPipelineLayout_;
 	VkDescriptorSetLayout rtDescriptorSetLayout_;
 
@@ -268,9 +257,6 @@ private:
 
 	std::array<vulkan::VulkanMemoryResource*, 5> denoiseUniformBuffers_;
 	glm::mat4 lastFrameCameraVPMatrix_;
-
-	// temp
-	std::vector<VkShaderModule> shaderModules_;
 
 	void InitRayTracing();
 	void createBottomLevelAccelerationStructure();
@@ -285,14 +271,6 @@ private:
 	void updateDescriptorSets();
 	void CleanUpRayTracing();
 	void buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, Camera* camera);
-	//
-	uint64_t getBufferDeviceAddress(VkBuffer buffer);
-	uint64_t getAccelerationStructureDeviceAddress(VkAccelerationStructureKHR accelerationStructure);
-	void destoryAccelerationStructure(VkAccelerationStructureKHR handle);
-	RayTracingScratchBuffer createScratchBuffer(VkDeviceSize size);
-	void deleteScratchBuffer(RayTracingScratchBuffer& scratchBuffer);
-	void createAccelerationStructureBuffer(AccelerationStructure& accelerationStructure, VkAccelerationStructureBuildSizesInfoKHR buildSizeInfo);
-	VkPipelineShaderStageCreateInfo loadShader(std::string fileName, VkShaderStageFlagBits stage);
 
 };
 
@@ -325,19 +303,16 @@ public:
 private:
 	glm::vec3 front_;
 	glm::vec3 up_ = glm::vec3(0, 1, 0);
-	float focus_distance_ = 2;	// Ӱ��FOV�Ľ���
+	float focus_distance_ = 2;
 
-	// 
 	uint32_t* cachedAccumulateImageData_ {nullptr};
 
-	// ����������任������ϵ
 	glm::vec3 screen_left_down_corner_;
 	// DOF
 	bool useDOF_ = true;
-	float DOF_focus_distance_ = 6;	// ���ھ���Ľ���
+	float DOF_focus_distance_ = 6;
 	float lens_radius_ = 0.02f;
 
-	// �����ڽ�ƽ���ϵ�����ϵ�����ڼ������յ�ray target 
 	glm::vec3 focus_vertical_;
 	glm::vec3 focus_horizontal_;
 	glm::vec3 focus_left_down_corner_;

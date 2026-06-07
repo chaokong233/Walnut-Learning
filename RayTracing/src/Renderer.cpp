@@ -2,7 +2,6 @@
 #include "Walnut/Random.h"
 #include "Walnut/Input/Input.h"
 #include "walnut/Application.h"
-#include "walnut/tool.hpp"
 #include "Walnut/myVulkan/myVulkanInclude.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
@@ -442,24 +441,20 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 	void Renderer::InitRayTracing()
 	{
-		// ��ȡ�豸֧�ֵĹ�׷����
-			// Get ray tracing pipeline properties, which will be used later on in the sample
-		rayTracingPipelineProperties_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
-		VkPhysicalDeviceProperties2 deviceProperties2{};
-		deviceProperties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
-		deviceProperties2.pNext = &rayTracingPipelineProperties_;
-		vkGetPhysicalDeviceProperties2(g_PhysicalDevice, &deviceProperties2);
+		// Get ray tracing pipeline properties, which will be used later on in the sample
+		rtBackend_ = std::make_unique<rt::VulkanRTBackend>(rt::VulkanRTBackend::CreateInfo{
+			.device = g_Device,
+			.physicalDevice = g_PhysicalDevice,
+			.allocator = g_pVkMemoryAllocator,
+			.commandPool = g_pCommandPool,
+			.queue = g_Queue,
+			.dynamicLoader = &g_dynamicLoader
+		});
 
 			// Get acceleration structure properties, which will be used later on in the sample
-		accelerationStructureFeatures_.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-		VkPhysicalDeviceFeatures2 deviceFeatures2{};
-		deviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-		deviceFeatures2.pNext = &accelerationStructureFeatures_;
-		vkGetPhysicalDeviceFeatures2(g_PhysicalDevice, &deviceFeatures2);
 
 		frameDatas_.resize(g_MinImageCount);
 
-		// ������׷��Դ
 		createBottomLevelAccelerationStructure();
 		createTopLevelAccelerationStructure();
 		createUniformBuffer();
@@ -494,15 +489,14 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		VkDeviceOrHostAddressConstKHR indexBufferDeviceAddress{};
 		VkDeviceOrHostAddressConstKHR transformBufferDeviceAddress{};
 
-		vertexBufferDeviceAddress.deviceAddress = getBufferDeviceAddress(model_->vertices.buffer->buffer());
-		indexBufferDeviceAddress.deviceAddress = getBufferDeviceAddress(model_->indices.buffer->buffer());
-		transformBufferDeviceAddress.deviceAddress = getBufferDeviceAddress(transformBuffer_->buffer());
+		vertexBufferDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(model_->vertices.buffer->buffer());
+		indexBufferDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(model_->indices.buffer->buffer());
+		transformBufferDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(transformBuffer_->buffer());
 
 		// ============ Build==============
 		std::vector<uint32_t> maxPrimitiveCounts;
 		std::vector<VkAccelerationStructureGeometryKHR> geometries;
 		std::vector<VkAccelerationStructureBuildRangeInfoKHR> accelerationBuildStructureRangeInfos;
-		std::vector<VkAccelerationStructureBuildRangeInfoKHR*> pAccelerationBuildStructureRangeInfos;
 		std::vector<GeometryNode> geometriesNode;
 
 		for(auto& mesh : model_->linerMeshes)
@@ -561,14 +555,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			geometriesNode.push_back(node);
 			
 		}
-		uint32_t geometriesCount = static_cast<uint32_t>(geometries.size());
-		pAccelerationBuildStructureRangeInfos.resize(geometriesCount);
-		for (size_t i = 0; i < geometriesCount; i++)
-		{
-			pAccelerationBuildStructureRangeInfos[i] = &accelerationBuildStructureRangeInfos[i];
-		}
-
-		
 		vulkan::VulkanLocalBuffer::CopierCreateInfo copierInfo {
 				.commandPool = g_pCommandPool,
 				.transferQueue = g_Queue
@@ -579,69 +565,14 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, copierInfo);
 		geometryNodeBuffer_->UploadMemory(geometriesNode.data(), bufferSize, 0);
 
-		// Get size info
-		VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{};
-		accelerationStructureBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		accelerationStructureBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		accelerationStructureBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		accelerationStructureBuildGeometryInfo.geometryCount = geometries.size();
-		accelerationStructureBuildGeometryInfo.pGeometries = geometries.data();
-		
-		// ��ȡ���ٽṹ��Ҫ��size
-		VkAccelerationStructureBuildSizesInfoKHR accelerationStructureBuildSizesInfo{};
-		accelerationStructureBuildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		//
-		auto vkGetAccelerationStructureBuildSizesKHR_Func = (PFN_vkGetAccelerationStructureBuildSizesKHR)g_dynamicLoader.GetDeviceProc("vkGetAccelerationStructureBuildSizesKHR");
-		vkGetAccelerationStructureBuildSizesKHR_Func(
-			g_Device,
-			VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-			&accelerationStructureBuildGeometryInfo,
-			maxPrimitiveCounts.data(),
-			&accelerationStructureBuildSizesInfo);
+		rt::AccelerationStructureBuildDesc buildDesc{};
+		buildDesc.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+		buildDesc.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildDesc.geometries = geometries;
+		buildDesc.ranges = accelerationBuildStructureRangeInfos;
+		buildDesc.primitiveCounts = maxPrimitiveCounts;
+		bottomLevelAS_ = rtBackend_->BuildAccelerationStructure(buildDesc);
 
-		// �������ٽṹ��buffer��scratch Buffer
-		createAccelerationStructureBuffer(bottomLevelAS_, accelerationStructureBuildSizesInfo);
-
-		VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{};
-		accelerationStructureCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-		accelerationStructureCreateInfo.buffer = bottomLevelAS_.buffer->buffer();
-		accelerationStructureCreateInfo.size = accelerationStructureBuildSizesInfo.accelerationStructureSize;
-		accelerationStructureCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-
-		// Create ���ٽṹ
-		auto vkCreateAccelerationStructureKHR_Func = (PFN_vkCreateAccelerationStructureKHR)g_dynamicLoader.GetDeviceProc("vkCreateAccelerationStructureKHR");
-		vkCreateAccelerationStructureKHR_Func(g_Device, &accelerationStructureCreateInfo, nullptr, &bottomLevelAS_.handle);
-
-		// Create a small scratch buffer used during build of the bottom level acceleration structure
-		RayTracingScratchBuffer scratchBuffer = createScratchBuffer(accelerationStructureBuildSizesInfo.buildScratchSize);
-
-		VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{};
-		accelerationBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		accelerationBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
-		accelerationBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		accelerationBuildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		accelerationBuildGeometryInfo.dstAccelerationStructure = bottomLevelAS_.handle;
-		accelerationBuildGeometryInfo.geometryCount = geometries.size();
-		accelerationBuildGeometryInfo.pGeometries = geometries.data();
-		accelerationBuildGeometryInfo.scratchData.deviceAddress = scratchBuffer.deviceAddress;
-
-
-		// Build
-		{
-			vulkan::SingleTimeCommands cmd(g_pCommandPool);
-			// 
-			auto vkCmdBuildAccelerationStructuresKHR_Func = (PFN_vkCmdBuildAccelerationStructuresKHR)g_dynamicLoader.GetDeviceProc("vkCmdBuildAccelerationStructuresKHR");
-			vkCmdBuildAccelerationStructuresKHR_Func(
-				cmd.getBuffer(),
-				1,
-				&accelerationBuildGeometryInfo,
-				pAccelerationBuildStructureRangeInfos.data());
-			cmd.Submit(g_Queue);
-		}
-
-		bottomLevelAS_.deviceAddress = getAccelerationStructureDeviceAddress(bottomLevelAS_.handle);
-
-		deleteScratchBuffer(scratchBuffer);
 	}
 
 	void Renderer::createTopLevelAccelerationStructure()
@@ -666,7 +597,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		instancesBuffer->uploadData(&instance, VK_WHOLE_SIZE);
 
 		VkDeviceOrHostAddressConstKHR instanceDataDeviceAddress{};
-		instanceDataDeviceAddress.deviceAddress = getBufferDeviceAddress(instancesBuffer->buffer());
+		instanceDataDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(instancesBuffer->buffer());
 
 		VkAccelerationStructureGeometryKHR accelerationStructureGeometry{};
 		accelerationStructureGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
@@ -676,78 +607,20 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		accelerationStructureGeometry.geometry.instances.arrayOfPointers = VK_FALSE;
 		accelerationStructureGeometry.geometry.instances.data = instanceDataDeviceAddress;
 
-		// Get size info
-		/*
-		The pSrcAccelerationStructure, dstAccelerationStructure, and mode members of pBuildInfo are ignored. Any VkDeviceOrHostAddressKHR members of pBuildInfo are ignored by this command, except that the hostAddress member of VkAccelerationStructureGeometryTrianglesDataKHR::transformData will be examined to check if it is NULL.*
-		*/
-		VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{};
-		accelerationStructureBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		accelerationStructureBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		accelerationStructureBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		accelerationStructureBuildGeometryInfo.geometryCount = 1;
-		accelerationStructureBuildGeometryInfo.pGeometries = &accelerationStructureGeometry;
-
-		uint32_t primitive_count = 1;
-
-		VkAccelerationStructureBuildSizesInfoKHR accelerationStructureBuildSizesInfo{};
-		accelerationStructureBuildSizesInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR;
-		auto vkGetAccelerationStructureBuildSizesKHR_Func = (PFN_vkGetAccelerationStructureBuildSizesKHR)g_dynamicLoader.GetDeviceProc("vkGetAccelerationStructureBuildSizesKHR");
-		vkGetAccelerationStructureBuildSizesKHR_Func(
-			g_Device,
-			VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
-			&accelerationStructureBuildGeometryInfo,
-			&primitive_count,
-			&accelerationStructureBuildSizesInfo);
-
-		// �������ٽṹ��buffer��scratch Buffer
-		createAccelerationStructureBuffer(topLevelAS_, accelerationStructureBuildSizesInfo);
-
-		VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{};
-		accelerationStructureCreateInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR;
-		accelerationStructureCreateInfo.buffer = topLevelAS_.buffer->buffer();
-		accelerationStructureCreateInfo.size = accelerationStructureBuildSizesInfo.accelerationStructureSize;
-		accelerationStructureCreateInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		// Create ���ٽṹ
-		auto vkCreateAccelerationStructureKHR_Func = (PFN_vkCreateAccelerationStructureKHR)g_dynamicLoader.GetDeviceProc("vkCreateAccelerationStructureKHR");
-		vkCreateAccelerationStructureKHR_Func(g_Device, &accelerationStructureCreateInfo, nullptr, &topLevelAS_.handle);
-
-		// Create a small scratch buffer used during build of the top level acceleration structure
-		RayTracingScratchBuffer scratchBuffer = createScratchBuffer(accelerationStructureBuildSizesInfo.buildScratchSize);
-
-		VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{};
-		accelerationBuildGeometryInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR;
-		accelerationBuildGeometryInfo.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
-		accelerationBuildGeometryInfo.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
-		accelerationBuildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
-		accelerationBuildGeometryInfo.dstAccelerationStructure = topLevelAS_.handle;
-		accelerationBuildGeometryInfo.geometryCount = 1;
-		accelerationBuildGeometryInfo.pGeometries = &accelerationStructureGeometry;
-		accelerationBuildGeometryInfo.scratchData.deviceAddress = scratchBuffer.deviceAddress;
-
 		VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo{};
 		accelerationStructureBuildRangeInfo.primitiveCount = 1;
 		accelerationStructureBuildRangeInfo.primitiveOffset = 0;
 		accelerationStructureBuildRangeInfo.firstVertex = 0;
 		accelerationStructureBuildRangeInfo.transformOffset = 0;
-		std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
 
-		// Build the acceleration structure on the device via a one-time command buffer submission
-		// Some implementations may support acceleration structure building on the host (VkPhysicalDeviceAccelerationStructureFeaturesKHR->accelerationStructureHostCommands), but we prefer device builds
-		{
-			vulkan::SingleTimeCommands cmd(g_pCommandPool);
-			// 
-			auto vkCmdBuildAccelerationStructuresKHR_Func = (PFN_vkCmdBuildAccelerationStructuresKHR)g_dynamicLoader.GetDeviceProc("vkCmdBuildAccelerationStructuresKHR");
-			vkCmdBuildAccelerationStructuresKHR_Func(
-				cmd.getBuffer(),
-				1,
-				&accelerationBuildGeometryInfo,
-				accelerationBuildStructureRangeInfos.data());
-			cmd.Submit(g_Queue);
-		}
+		rt::AccelerationStructureBuildDesc buildDesc{};
+		buildDesc.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+		buildDesc.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+		buildDesc.geometries = { accelerationStructureGeometry };
+		buildDesc.ranges = { accelerationStructureBuildRangeInfo };
+		buildDesc.primitiveCounts = { 1 };
+		topLevelAS_ = rtBackend_->BuildAccelerationStructure(buildDesc);
 
-		topLevelAS_.deviceAddress = getAccelerationStructureDeviceAddress(topLevelAS_.handle);
-
-		deleteScratchBuffer(scratchBuffer);
 		delete instancesBuffer;
 	}
 
@@ -841,74 +714,26 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		pipelineLayoutCI.pSetLayouts = &rtDescriptorSetLayout_;
 		vkCreatePipelineLayout(g_Device, &pipelineLayoutCI, nullptr, &rtPipelineLayout_);
 
-		/*
-			Setup ray tracing shader groups
-		*/
-		std::vector<VkPipelineShaderStageCreateInfo> shaderStages;
+		std::vector<rt::ShaderStageDesc> shaderStages = {
+			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/raygen.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR },
+			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/miss.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR },
+			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/shadow.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR },
+			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/closesthit.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR }
+		};
 
-		// Ray generation group
-		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/raygen.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR));
-			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
-			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-			shaderGroup.generalShader = static_cast<uint32_t>(shaderStages.size()) - 1;
-			shaderGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-			shaderGroups_.push_back(shaderGroup);
-		}
+		std::vector<rt::ShaderGroupDesc> shaderGroups = {
+			{ VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 0 },
+			{ VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 1 },
+			{ VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR, 2 },
+			{ VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR, VK_SHADER_UNUSED_KHR, 3 }
+		};
 
-		// Miss group
-		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/miss.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
-			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
-			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR;
-			shaderGroup.generalShader = static_cast<uint32_t>(shaderStages.size()) - 1;
-			shaderGroup.closestHitShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-			shaderGroups_.push_back(shaderGroup);
-					// Second shader for shadows
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/shadow.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR));
-			shaderGroup.generalShader = static_cast<uint32_t>(shaderStages.size()) - 1;
-			shaderGroups_.push_back(shaderGroup);
-		}
-
-		// Closest hit group
-		{
-			shaderStages.push_back(loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/closesthit.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR));
-			VkRayTracingShaderGroupCreateInfoKHR shaderGroup{};
-			shaderGroup.sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR;
-			shaderGroup.type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR;
-			shaderGroup.generalShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.closestHitShader = static_cast<uint32_t>(shaderStages.size()) - 1;
-			shaderGroup.anyHitShader = VK_SHADER_UNUSED_KHR;
-			shaderGroup.intersectionShader = VK_SHADER_UNUSED_KHR;
-			shaderGroups_.push_back(shaderGroup);
-		}
-
-		/*
-			Create the ray tracing pipeline
-		*/
-		VkRayTracingPipelineCreateInfoKHR rayTracingPipelineCI{};
-		rayTracingPipelineCI.sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR;
-		rayTracingPipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
-		rayTracingPipelineCI.pStages = shaderStages.data();
-		rayTracingPipelineCI.groupCount = static_cast<uint32_t>(shaderGroups_.size());
-		rayTracingPipelineCI.pGroups = shaderGroups_.data();
-		rayTracingPipelineCI.maxPipelineRayRecursionDepth = 1;
-		rayTracingPipelineCI.layout = rtPipelineLayout_;
-		// 
-		auto func = (PFN_vkCreateRayTracingPipelinesKHR)g_dynamicLoader.GetDeviceProc("vkCreateRayTracingPipelinesKHR");
-		func(g_Device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &rayTracingPipelineCI, nullptr, &rtPipeline_);
-
-		// Clear Shader Module
-		for (auto& it : shaderModules_)
-		{
-			vkDestroyShaderModule(g_Device, it, nullptr);
-		}
+		rtPipeline_ = rtBackend_->CreateRayTracingPipeline({
+			.layout = rtPipelineLayout_,
+			.maxPipelineRayRecursionDepth = 1,
+			.shaderStages = shaderStages,
+			.shaderGroups = shaderGroups
+		});
 	}
 
 	void Renderer::createDenoisePipeline()
@@ -938,7 +763,12 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		vkCreatePipelineLayout(g_Device, &pipelineLayoutCI, nullptr, &denoisePipelineLayout_);
 
 		// Shader
-		VkPipelineShaderStageCreateInfo shaderStage = loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/denoise/svgf.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+		VkShaderModule shaderModule = vulkan::loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/denoise/svgf.comp.spv", g_Device);
+		VkPipelineShaderStageCreateInfo shaderStage{};
+		shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		shaderStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+		shaderStage.module = shaderModule;
+		shaderStage.pName = "main";
 
 		// Pipeline
 		VkComputePipelineCreateInfo pipelineInfo{};
@@ -949,33 +779,11 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		if (vkCreateComputePipelines(g_Device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &denoisePipeline_) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create compute pipeline!");
 		}
+		vkDestroyShaderModule(g_Device, shaderModule, nullptr);
 	}
 
 	void Renderer::createShaderBindingTable() {
-		const uint32_t handleSize = rayTracingPipelineProperties_.shaderGroupHandleSize;
-		const uint32_t handleSizeAligned = tool::roundUp(rayTracingPipelineProperties_.shaderGroupHandleSize, rayTracingPipelineProperties_.shaderGroupHandleAlignment);
-		const uint32_t groupCount = static_cast<uint32_t>(shaderGroups_.size());
-		const uint32_t sbtSize = groupCount * handleSizeAligned;
-
-		std::vector<uint8_t> shaderHandleStorage(sbtSize);
-		auto func = (PFN_vkGetRayTracingShaderGroupHandlesKHR)g_dynamicLoader.GetDeviceProc("vkGetRayTracingShaderGroupHandlesKHR");
-		func(g_Device, rtPipeline_, 0, groupCount, sbtSize, shaderHandleStorage.data());
-
-		// Create STB
-		raygenShaderBindingTable_ = g_pVkMemoryAllocator->createBuffer(handleSize,
-				VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-				VMA_MEMORY_USAGE_CPU_ONLY).release();
-		missShaderBindingTable_ = g_pVkMemoryAllocator->createBuffer(handleSize * 2,
-				VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-				VMA_MEMORY_USAGE_CPU_ONLY).release();
-		hitShaderBindingTable_ = g_pVkMemoryAllocator->createBuffer(handleSize,
-				VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-				VMA_MEMORY_USAGE_CPU_ONLY).release();
-
-		// Copy handles
-		raygenShaderBindingTable_->uploadData(shaderHandleStorage.data(), handleSize);
-		missShaderBindingTable_->uploadData(shaderHandleStorage.data() + handleSizeAligned, handleSize * 2);
-		hitShaderBindingTable_->uploadData(shaderHandleStorage.data() + handleSizeAligned * 3, handleSize);
+		shaderBindingTable_ = rtBackend_->CreateShaderBindingTable(rtPipeline_, 1, 2, 1);
 	}
 
 	void Renderer::createDescriptorSets()
@@ -1059,29 +867,25 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			delete frameDatas_[i].DenoiseUniformBuffer_;
 		}
 		delete lightsBuffer_;
-		// stb
-		delete raygenShaderBindingTable_;
-		delete missShaderBindingTable_;
-		delete hitShaderBindingTable_;
 		delete geometryNodeBuffer_;
+		shaderBindingTable_.Reset();
 
 		for (size_t i = 0; i < denoiseUniformBuffers_.size(); i++)
 		{
 			delete denoiseUniformBuffers_[i];
 		}
 
-		bottomLevelAS_.buffer.reset();
-		topLevelAS_.buffer.reset();
-		destoryAccelerationStructure(bottomLevelAS_.handle);
-		destoryAccelerationStructure(topLevelAS_.handle);
+		rtBackend_->DestroyAccelerationStructure(bottomLevelAS_);
+		rtBackend_->DestroyAccelerationStructure(topLevelAS_);
 
+		rtPipeline_.Destroy();
 		vkDestroyDescriptorSetLayout(g_Device, rtDescriptorSetLayout_, nullptr);
 		vkDestroyPipelineLayout(g_Device, rtPipelineLayout_, nullptr);
-		vkDestroyPipeline(g_Device, rtPipeline_, nullptr);
 	
 		vkDestroyDescriptorSetLayout(g_Device, denoiseDescriptorSetLayout_, nullptr);
 		vkDestroyPipelineLayout(g_Device, denoisePipelineLayout_, nullptr);
 		vkDestroyPipeline(g_Device, denoisePipeline_, nullptr);
+		rtBackend_.reset();
 	}
 
 	void Renderer::buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, Camera* pCamera)
@@ -1092,26 +896,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		// 
 		uint32_t width = outputFinalImage_->GetWidth();
 		uint32_t height = outputFinalImage_->GetHeight();
-		VkSemaphore denoise_semaphore = wd->FrameSemaphores[wd->SemaphoreIndex].denoiseComputeSemaphore;
-
-		const uint32_t handleSizeAligned = tool::roundUp(rayTracingPipelineProperties_.shaderGroupHandleSize, rayTracingPipelineProperties_.shaderGroupHandleAlignment);
-
-		VkStridedDeviceAddressRegionKHR raygenShaderSbtEntry{};
-		raygenShaderSbtEntry.deviceAddress = getBufferDeviceAddress(raygenShaderBindingTable_->buffer());
-		raygenShaderSbtEntry.stride = handleSizeAligned;
-		raygenShaderSbtEntry.size = handleSizeAligned;
-
-		VkStridedDeviceAddressRegionKHR missShaderSbtEntry{};
-		missShaderSbtEntry.deviceAddress = getBufferDeviceAddress(missShaderBindingTable_->buffer());
-		missShaderSbtEntry.stride = handleSizeAligned;
-		missShaderSbtEntry.size = handleSizeAligned;
-
-		VkStridedDeviceAddressRegionKHR hitShaderSbtEntry{};
-		hitShaderSbtEntry.deviceAddress = getBufferDeviceAddress(hitShaderBindingTable_->buffer());
-		hitShaderSbtEntry.stride = handleSizeAligned;
-		hitShaderSbtEntry.size = handleSizeAligned;
-
-		VkStridedDeviceAddressRegionKHR callableShaderSbtEntry{};
 
 		// ===================================
 		Camera& camera = *pCamera;
@@ -1138,21 +922,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 				VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 
-		// RT Pass 
-		vkCmdBindPipeline(fd->CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipeline_);
-
-		vkCmdBindDescriptorSets(fd->CommandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rtPipelineLayout_, 0, 1, &frameDatas_[wd->FrameIndex].rtDescriptorSet_, 0, 0);
-
-		auto vkCmdTraceRaysKHR_Func = (PFN_vkCmdTraceRaysKHR)g_dynamicLoader.GetDeviceProc("vkCmdTraceRaysKHR");
-		vkCmdTraceRaysKHR_Func(
-			fd->CommandBuffer,
-			&raygenShaderSbtEntry,
-			&missShaderSbtEntry,
-			&hitShaderSbtEntry,
-			&callableShaderSbtEntry,
-			width,
-			height,
-			1);
+		rtBackend_->CmdTraceRays(fd->CommandBuffer, rtPipeline_, shaderBindingTable_, frameDatas_[wd->FrameIndex].rtDescriptorSet_, width, height, 1);
 
 		// Transform: RayTracing -> Compute
 		vulkan::VulkanImage::transitionImageLayout(fd->CommandBuffer, outputFinalImage_->GetImage(),  VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
@@ -1191,77 +961,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		isNeedTransition = true;
 	}
-
-	// ============================== �������� ===============================
-		// ��ȡbuffer������?
-	uint64_t Renderer::getBufferDeviceAddress(VkBuffer buffer)
-	{
-		VkBufferDeviceAddressInfoKHR bufferDeviceAI{};
-		bufferDeviceAI.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
-		bufferDeviceAI.buffer = buffer;
-		// 
-		auto func = (PFN_vkGetBufferDeviceAddressKHR)g_dynamicLoader.GetDeviceProc("vkGetBufferDeviceAddressKHR");
-		return func(g_Device, &bufferDeviceAI);
-	}
-		// ��ȡ���ٽṹ������?
-	uint64_t Renderer::getAccelerationStructureDeviceAddress(VkAccelerationStructureKHR accelerationStructure)
-	{
-		VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{};
-		accelerationDeviceAddressInfo.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR;
-		accelerationDeviceAddressInfo.accelerationStructure = accelerationStructure;
-		// ���غ�����ַ
-		auto func = (PFN_vkGetAccelerationStructureDeviceAddressKHR)g_dynamicLoader.GetDeviceProc("vkGetAccelerationStructureDeviceAddressKHR");
-		return func(g_Device, &accelerationDeviceAddressInfo);
-	}
-
-	void Renderer::destoryAccelerationStructure(VkAccelerationStructureKHR handle)
-	{
-		auto func = (PFN_vkDestroyAccelerationStructureKHR)g_dynamicLoader.GetDeviceProc("vkDestroyAccelerationStructureKHR");
-		func(g_Device, handle, 0);
-		return;
-	}
-
-	RayTracingScratchBuffer Renderer::createScratchBuffer(VkDeviceSize size)
-	{
-		RayTracingScratchBuffer scratchBuffer{};
-		// Buffer, Memory
-		scratchBuffer.buffer = std::move(g_pVkMemoryAllocator->createBuffer(size,
-						VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-						VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
-		// DeviceAddress
-		scratchBuffer.deviceAddress = getBufferDeviceAddress(scratchBuffer.buffer->buffer());
-
-		return scratchBuffer;
-	}
-
-	void Renderer::deleteScratchBuffer(RayTracingScratchBuffer& scratchBuffer) 
-	{
-		if (!scratchBuffer.buffer)
-		{
-			delete scratchBuffer.buffer.get();
-		}
-	}
-
-	void Renderer::createAccelerationStructureBuffer(AccelerationStructure &accelerationStructure, VkAccelerationStructureBuildSizesInfoKHR buildSizeInfo)
-	{
-		accelerationStructure.buffer = std::move(g_pVkMemoryAllocator->createBuffer(buildSizeInfo.accelerationStructureSize,
-										VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
-										VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE));
-	}
-
-	VkPipelineShaderStageCreateInfo Renderer::loadShader(std::string fileName, VkShaderStageFlagBits stage)
-	{
-		VkPipelineShaderStageCreateInfo shaderStage = {};
-		shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		shaderStage.stage = stage;
-		shaderStage.module = vulkan::loadShader(fileName.c_str(), g_Device);
-
-		shaderStage.pName = "main";
-		assert(shaderStage.module != VK_NULL_HANDLE);
-		shaderModules_.push_back(shaderStage.module);
-		return shaderStage;
-	}
-
 #endif
 
 Camera::Camera(glm::vec3 position, glm::vec3 front)
@@ -1313,13 +1012,13 @@ void Camera::Tick(float ts, uint32_t width, uint32_t height)
 	front_ = normalize(front_);
 	// Update Screen
 	float focusMagnification = DOF_focus_distance_ / focus_distance_;	// ���ս�ƽ�������FOVƽ��ķŴ�?? ��
-		// FOVƽ��
+		// FOV
 	horizontal_ = normalize(glm::cross(front_, up_));
 	vertical_ = normalize(glm::cross(horizontal_, front_));
 	horizontal_ *= (float)width / (float)height;
 	screen_left_down_corner_ = position_ + front_ * focus_distance_ - (vertical_ + horizontal_) * .5f;
 	relative_left_down_corner_ = front_ * focus_distance_ - (vertical_ + horizontal_) * .5f;
-		// ��ƽ��
+
 	focus_vertical_ = focusMagnification * vertical_;
 	focus_horizontal_ = focusMagnification * horizontal_;
 

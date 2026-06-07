@@ -17,98 +17,7 @@ class ExampleLayer : public Walnut::Layer
 public:
 	ExampleLayer()
 	{
-#ifdef RandomScene
-		const float Max_Radius = .8f;
-		const float Min_Radius = 0.15f;
-		const float Ground_Radius = 1000.0f;
-		const int widthIter = 3;
 
-		auto ground = std::make_shared<Sphere>(glm::vec3(0, -Ground_Radius - Max_Radius, 0), Ground_Radius);
-		ground->material = std::make_shared<Lambertian>(Color(.2f,.2f,.3f,1.0f));
-		scene_.Add(ground);
-
-		auto rectLit = std::make_shared<Rect>();
-		rectLit->SetPosition(glm::vec3(0, 6, 0));
-		rectLit->SetScale(glm::vec3(8));
-		rectLit->CalculateTrans();
-		rectLit->UpdateNode(glm::mat4(1));
-		rectLit->Pricompute();
-		auto lit = std::make_shared<Diffuse_Light>(Color(1,1,1,1));
-		lit->SetIntensity(2.0f);
-		rectLit->material = lit;
-		scene_.Add(rectLit);
-
-		for (int i = -widthIter; i < widthIter + 1; i++)
-		{
-			for (int j = -widthIter; j < widthIter + 1; j++)
-			{
-				auto r = std::pow((Random::Float(Min_Radius, Max_Radius) - Min_Radius) / Max_Radius, 1.5) * Max_Radius + Min_Radius;
-				auto x = Max_Radius * 2 * i;
-				auto z = Max_Radius * 2 * j;
-				//float y = (std::sqrt((Ground_Radius + r) * (Ground_Radius + r) - (x * x + z * z)) - Ground_Radius) - Max_Radius;
-				float y = Random::Float(0, 4);
-				std::shared_ptr<Hittable> mod;
-				uint32_t model = Random::UInt(0, 3);
-				{
-					std::shared_ptr<Material> m;
-					uint32_t mat = Random::UInt(0, 4);
-					{
-						if(mat < 3) m = std::make_shared<Lambertian>(Color(Random::Vec3(.3, 1)));
-						else if(mat == 4 && model == 4)	m = std::make_shared<PureRefraction>(Color(Random::Vec3(.6, 1)));
-						else m = std::make_shared<Metal>(Color(Random::Vec3(.4, 1)));
-					}
-					if (model < 3)
-					{
-						auto s = std::make_shared<Sphere>(glm::vec3(x, y, z), r);
-						s->material = m;
-						mod = s;
-					}
-					else
-					{
-						auto b = std::make_shared<Box>(m);
-						b->SetPosition(glm::vec3(x, y, z));
-						b->SetScale(glm::vec3(r * 1.6));
-						b->CalculateTrans();	
-						b->UpdateNode(glm::mat4(1));
-						b->Update();
-						mod = b;
-					}
-				}
-				
-				scene_.Add(mod);
-			}
-		}
-#endif
-
-#ifdef useCornellBox
-		auto red = std::make_shared<Lambertian>(Color(0.65, 0.05, 0.05, 1));
-		auto white = std::make_shared<Lambertian>(Color(0.73, 0.73, 0.73, 1));
-		auto green = std::make_shared<Lambertian>(Color(0.12, 0.45, 0.15, 1));
-		auto light = std::make_shared<Diffuse_Emissive>(Color(1.15, .8f, .27f, 1), 2);
-
-		auto rectL = std::make_shared<Rect>(light, glm::vec3(0, 1.84f / 2.0f, 0), glm::vec3(0, 0, 180), glm::vec3(.43f, 1.0f, .35f));
-		// material, position, rotation, scale
-        scene_.AddObject(std::make_shared<Rect>(red, glm::vec3(1.85f / 2.0f,0,0), glm::vec3(0,0,90), glm::vec3(1.85f,1.85f,1.85f)));
-        scene_.AddObject(std::make_shared<Rect>(green, glm::vec3(-1.85f / 2.0f,0,0), glm::vec3(0,0,-90), glm::vec3(1.85f,1.85f,1.85f)));
-        scene_.AddObject(rectL);
-        scene_.AddObject(std::make_shared<Rect>(white, glm::vec3(0,1.85f / 2.0f,0), glm::vec3(0,0,180), glm::vec3(1.85f,1.85f,1.85f)));
-        scene_.AddObject(std::make_shared<Rect>(white, glm::vec3(0,-1.85f / 2.0f,0), glm::vec3(0,0,0), glm::vec3(1.85f,1.85f,1.85f)));
-        scene_.AddObject(std::make_shared<Rect>(white, glm::vec3(0,0,-1.85f / 2.0f), glm::vec3(90,0,0), glm::vec3(1.85f,1.85f,1.85f)));
-		// 165, 330
-        scene_.AddObject(std::make_shared<Box>(white, glm::vec3(.2f, (- 1.85f + 1.1f) / 2.0f, -.33f), glm::vec3(0,15,0), glm::vec3(.55f,1.1f,.55f)));
-		scene_.AddObject(std::make_shared<Box>(white, glm::vec3(.216f, (-1.85f + .55f) / 2.0f, .433f), glm::vec3(0, -18, 0), glm::vec3(.55f, .55f, .55f)));
-
-		auto areaL = std::make_shared<AreaLight>(*(rectL.get()), Color(1.15, .8f, .27f, 1), 5.0f);
-
-		light_ = areaL;
-		scene_.AddLight(areaL);
-#endif
-		//std::shared_ptr<Material> metal = std::make_shared<Metal>(Color(0.85, 0.85, 0.85, 1));
-		//auto red = std::make_shared<Lambertian>(Color(0.65, 0.05, 0.05, 1));
-		//auto model1 = std::make_shared<Model>(metal);
-		//model1->LoadModel("assets/model/Monkey.fbx");
-		//scene_.AddModel(model1);
-		//sph = scene_.GetObject(3);
 	}
 
 	virtual void OnUIRender() override
@@ -186,24 +95,7 @@ public:
 		{
 			light_->SetPower(lightIntensity_);
 		}
-		// Sphere 
-#ifdef shpereUI
-		ImGui::LabelText("", "\nSphere Info:");
-		if (ImGui::ColorEdit3("Sphere Color", sphereCol_))
-		{
-			dynamic_cast<Metal*>((dynamic_cast<Sphere*>(sph.get())->material).get())->SetAlbedo({ sphereCol_[0], sphereCol_[1], sphereCol_[2], 1});
-		}
 
-		if (ImGui::SliderFloat("Sphere Roughness", &rough_, 0, 1, "%.2f"))
-		{
-			dynamic_cast<Metal*>((dynamic_cast<Sphere*>(sph.get())->material).get())->SetRoughness(rough_);
-		}
-
-		if (ImGui::SliderFloat("Sphere Refractive Index", &refractive_, 1, 5, "%.2f"))
-		{
-			//dynamic_cast<Metal*>((dynamic_cast<Sphere*>(sph.get())->material).get())->SetRefractive(refractive_);
-		}
-#endif
 		// Render
 		if (ImGui::Button("Render"))
 		{

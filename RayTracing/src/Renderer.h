@@ -1,16 +1,15 @@
 #pragma once
 #include "Walnut/Application.h"
 
-#include <cmath>
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <memory>
+#include <vector>
 
 #include "Walnut/Image.h"
-#include "Ray_Hittable.h"
-#include "Denoiser.h"
-
-#ifdef VULKAN_RT
 #include "VulkanRTBackend.h"
-#endif
+
 
 // Default
 #define Default_Max_Render_Samples_Per_Pixel 1
@@ -23,6 +22,7 @@
 class Camera;
 class ImGui_ImplVulkanH_Window;
 class RTModel;
+class Scene;
 
 // Camera Uniform Data
 struct CameraUniformData {
@@ -69,120 +69,16 @@ struct UniformLightsData
 };
 
 
-struct TracingColors
-{
-	Color albedoColor{0,0,0,1};
-	Color normalColor{0,0,0,1};
-	Color finalColor{0,0,0,1};
-
-	TracingColors() = default;
-
-	TracingColors(const TracingColors& other)
-	{
-		albedoColor = other.albedoColor;
-		finalColor = other.finalColor;
-		normalColor = other.normalColor;
-	}
-
-	TracingColors& operator=(const TracingColors& other)
-	{
-		albedoColor = other.albedoColor;
-		finalColor = other.finalColor;
-		normalColor = other.normalColor;
-		return *this;
-	}
-
-	TracingColors& Mul(TracingColors& other)
-	{
-		albedoColor = albedoColor.MulWithoutAlpha(other.albedoColor);
-		normalColor = normalColor.MulWithoutAlpha(other.normalColor);
-		finalColor = finalColor.MulWithoutAlpha(other.finalColor);
-		return *this;
-	}
-
-	TracingColors operator+(TracingColors&& other)
-	{
-		TracingColors res(*this);
-		res.albedoColor = res.albedoColor + other.albedoColor;
-		res.normalColor = res.normalColor + other.normalColor;
-		res.finalColor = res.finalColor + other.finalColor;
-		return res;
-	}
-
-	TracingColors operator/(float para)
-	{
-		TracingColors res(*this);
-		res.albedoColor = res.albedoColor / para;
-		res.normalColor = res.normalColor / para;
-		res.finalColor = res.finalColor / para;
-		return res;
-	}
-
-	TracingColors operator*(float para)
-	{
-		TracingColors res(*this);
-		res.albedoColor = res.albedoColor * para;
-		res.normalColor = res.normalColor * para;
-		res.finalColor = res.finalColor * para;
-		return res;
-	}
-};
-
-#ifndef VULKAN_RT
-class Renderer
-{
-public:
-	Renderer();
-	Renderer(uint32_t width, uint32_t height);
-	~Renderer();
-
-	void OnResize(uint32_t width, uint32_t height);
-	void Render(Camera& camera, RenderScene& scene, bool isAdaptiveNoise = true, bool isDenoise = false);
-	TracingColors Ray_Colors(const Ray& ray, int depth, RenderScene& scene, bool isFirstHit = false);
-	bool CalculateDirectLightAttenuation(const LightSample& lightSample, const Ray& ray_in, const HitResult& hitres, RenderScene& scene, Color& resColor);
-
-	inline std::shared_ptr<Walnut::Image> GetFinalImage() const { return finalImage_; }
-	inline std::shared_ptr<Walnut::Image> GetNormalImage() const { return normalImage_; }
-	inline std::shared_ptr<Walnut::Image> GetAlbedoImage() const { return albedoImage_; }
-	inline void SetMaxRenderSampleCount(uint32_t count) { max_render_samples_per_pixel_ = count; }
-	inline void SetMinRenderSampleCount(uint32_t count) { min_render_samples_per_pixel_ = count; }
-	inline void SetMinRenderNoiseThreshold(double threshold) { min_render_noise_threshold = threshold; }
-	inline void SetMaxPreviewSampleCount(uint32_t count) { max_preview_samples_per_pixel_ = count; }
-	inline void SetMaxBounceCount(uint32_t count) { max_bounce_count_ = count; }
-	inline void SetUseMT(bool use) { use_MT_Acceleration_ = use; }
-
-private:
-	// For Denoise
-	std::shared_ptr<Walnut::Image> albedoImage_;
-	std::shared_ptr<Walnut::Image> normalImage_;
-	std::shared_ptr<Walnut::Image> finalImage_;
-
-	uint32_t* finalImageData_ {nullptr};
-	uint32_t* normalImageData_ {nullptr};
-	uint32_t* albedoImageData_ {nullptr};
-
-	Denoiser denoiser_;
-	// 
-	uint32_t max_bounce_count_ = 4;
-	uint32_t max_render_samples_per_pixel_ = Default_Max_Render_Samples_Per_Pixel;
-	uint32_t min_render_samples_per_pixel_ = Default_Min_Render_Samples_Per_Pixel;
-	uint32_t max_preview_samples_per_pixel_ = Default_Max_Preview_Samples_Per_Pixel;
-	double min_render_noise_threshold = Default_Render_Noise_Threshold;
-	// MT
-	bool use_MT_Acceleration_ = true;
-	std::vector<uint32_t> MT_Vertical_Iter;
-};
-
-#else
 
 class Renderer
 {
 public:
-	Renderer();
+	explicit Renderer(const Scene& scene);
 	~Renderer();
 
+	void SetScene(const Scene& scene);
 	void OnResize(uint32_t width, uint32_t height);
-	void Render(Camera& camera, RenderScene& scene, bool isAdaptiveNoise = true, bool isDenoise = false);
+	void Render(Camera& camera, bool isAdaptiveNoise = true, bool isDenoise = false);
 
 	inline std::shared_ptr<Walnut::StorageImage> GetFinalImage() const { return outputFinalImage_; }
 	inline std::shared_ptr<Walnut::StorageImage> GetNormalImage() const { return nowFrameNormalImage_; }
@@ -218,14 +114,16 @@ private:
 	double min_render_noise_threshold = Default_Render_Noise_Threshold;
 
 private:
+	const Scene* scene_{ nullptr };
+	uint64_t uploadedSceneRevision_{ 0 };
 	std::shared_ptr<RTModel> model_;
 
 	struct FrameData
 	{
-		vulkan::VulkanMemoryResource* RTUniformBuffer_;
-		vulkan::VulkanMemoryResource* DenoiseUniformBuffer_;
-		VkDescriptorSet rtDescriptorSet_;
-		std::array<VkDescriptorSet, 5> denoiseDescriptorSets_;
+		vulkan::VulkanMemoryResource* RTUniformBuffer_{ nullptr };
+		vulkan::VulkanMemoryResource* DenoiseUniformBuffer_{ nullptr };
+		VkDescriptorSet rtDescriptorSet_{ VK_NULL_HANDLE };
+		std::array<VkDescriptorSet, 5> denoiseDescriptorSets_{};
 	};
 
 
@@ -237,9 +135,9 @@ private:
 	rt::AccelerationStructure bottomLevelAS_{};
 	rt::AccelerationStructure topLevelAS_{};
 
-	vulkan::VulkanMemoryResource* transformBuffer_;
-	vulkan::VulkanLocalBuffer* geometryNodeBuffer_;
-	vulkan::VulkanLocalBuffer* lightsBuffer_;
+	vulkan::VulkanMemoryResource* transformBuffer_{ nullptr };
+	vulkan::VulkanLocalBuffer* geometryNodeBuffer_{ nullptr };
+	vulkan::VulkanLocalBuffer* lightsBuffer_{ nullptr };
 	// 
 	std::vector<FrameData> frameDatas_;
 	
@@ -247,19 +145,22 @@ private:
 
 	// Ray Tracing Pass
 	rt::RTPipeline rtPipeline_;
-	VkPipelineLayout rtPipelineLayout_;
-	VkDescriptorSetLayout rtDescriptorSetLayout_;
+	VkPipelineLayout rtPipelineLayout_{ VK_NULL_HANDLE };
+	VkDescriptorSetLayout rtDescriptorSetLayout_{ VK_NULL_HANDLE };
 
 	// Denoise Pass
-	VkPipeline denoisePipeline_;
-	VkPipelineLayout denoisePipelineLayout_;
-	VkDescriptorSetLayout denoiseDescriptorSetLayout_;
+	VkPipeline denoisePipeline_{ VK_NULL_HANDLE };
+	VkPipelineLayout denoisePipelineLayout_{ VK_NULL_HANDLE };
+	VkDescriptorSetLayout denoiseDescriptorSetLayout_{ VK_NULL_HANDLE };
 
-	std::array<vulkan::VulkanMemoryResource*, 5> denoiseUniformBuffers_;
+	std::array<vulkan::VulkanMemoryResource*, 5> denoiseUniformBuffers_{};
 	glm::mat4 lastFrameCameraVPMatrix_;
 
-	void InitRayTracing();
-	void createBottomLevelAccelerationStructure();
+	void InitRayTracing(const Scene& scene);
+	void rebuildSceneResources(const Scene& scene);
+	void releaseSceneResources();
+	void syncSceneResources();
+	void createBottomLevelAccelerationStructure(const Scene& scene);
 	void createTopLevelAccelerationStructure();
 	void createUniformBuffer();
 
@@ -274,7 +175,6 @@ private:
 
 };
 
-#endif
 
 class Camera
 {
@@ -283,12 +183,8 @@ public:
 
 	void Tick(float ts, uint32_t width, uint32_t height);
 
-
-	Ray GetRay(float u, float v);
-	Ray GetNormalizedRay(float u, float v);
-
 	void SetFocusDistance(float dis) { focus_distance_ = dis; }
-	void SetDOFFocusDistance(float dis) { DOF_focus_distance_ = dis; }	// �������ھ���Ľ���
+	void SetDOFFocusDistance(float dis) { DOF_focus_distance_ = dis; }
 	void SetDOFLensRadius(float radius) { lens_radius_ = radius; }
 	void SetUseDOF(bool use) { useDOF_ = use; }
 

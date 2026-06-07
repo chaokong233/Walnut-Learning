@@ -15,12 +15,13 @@
 - 移除多余的 CPU 层面的材质、相交检测的软实现代码，使得引擎完全专注且依赖于 Vulkan Raytracing 硬件管线。
 
 ## 3. 动态场景渲染支持
-**现状**：场景在 `WalnutApp.cpp` 中硬编码构造，不支持运行时的物体移动或光源改变。
+**现状**：场景在 `Renderer.cpp` 中硬编码，并在`WalnutApp.cpp`直接显示指定，renderer渲染的是硬编码的模型和光源，而不是动态场景。不支持运行时的物体移动或光源改变。
 **计划**：
-- **Scene 架构**：实现标准的 `Scene` 类，管理 `Entity`（包含 Mesh、Transform、Material）和 `Light`。
+- **Scene 架构**：实现标准的 `Scene` 类，管理 `Entity`（包含 Mesh、Transform、Texture、Material）和 `Light`。现在支持两种光源 `AreaLight` 和 `RadiusLight`。
 - **动态光源**：将光源信息打包放入 SSBO 或 Uniform Buffer 中，允许每帧更新数据而无需重建管线。
-- **动态模型**：对网格数据建立静态的 Bottom-Level Acceleration Structure (BLAS)；在每帧根据物体的 Transform 矩阵，动态重建或更新 Top-Level Acceleration Structure (TLAS)。
+- **动态模型**：对网格数据建立静态的 Bottom-Level Acceleration Structure (BLAS)；在每帧根据物体的 Transform 矩阵，动态重建或更新 Top-Level Acceleration Structure (TLAS)。支持动态的Material属性，Material属性通过geometryNodeBuffer_上传，更新这个buffer即可。
 
+ 
 ## 4. 资源管理与配置文件系统
 **现状**：资源路径硬编码，缺乏统一管理。
 **计划**：

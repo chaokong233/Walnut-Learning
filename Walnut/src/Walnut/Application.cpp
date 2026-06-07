@@ -187,19 +187,18 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 	// Create Logical Device (with 1 queue)
 	{
 		// Extension
-		std::vector<const char*> device_extensions = { "VK_KHR_swapchain" };
-		if constexpr (useVulkanRT)
-		{
-			device_extensions.emplace_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_SPIRV_1_4_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
-			device_extensions.emplace_back(VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);		
-		}
+		std::vector<const char*> device_extensions = {
+			"VK_KHR_swapchain",
+			VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+			VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+			VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+			VK_KHR_RAY_QUERY_EXTENSION_NAME,
+			VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+			VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+			VK_KHR_SPIRV_1_4_EXTENSION_NAME,
+			VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME,
+			VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME
+		};
 
 		const float queue_priority[] = { 1.0f };
 		VkDeviceQueueCreateInfo queue_info[1] = {};
@@ -214,49 +213,41 @@ static void SetupVulkan(const char** extensions, uint32_t extensions_count)
 		create_info.enabledExtensionCount = device_extensions.size();
 		create_info.ppEnabledExtensionNames = device_extensions.data();
 
-		if constexpr (useVulkanRT)
-		{	
-			VkPhysicalDeviceBufferDeviceAddressFeatures enabledBufferDeviceAddresFeatures{};
-			enabledBufferDeviceAddresFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
-			enabledBufferDeviceAddresFeatures.bufferDeviceAddress = VK_TRUE;
+		VkPhysicalDeviceBufferDeviceAddressFeatures enabledBufferDeviceAddresFeatures{};
+		enabledBufferDeviceAddresFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+		enabledBufferDeviceAddresFeatures.bufferDeviceAddress = VK_TRUE;
 
-			VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
-			enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
-			enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
+		VkPhysicalDeviceRayTracingPipelineFeaturesKHR enabledRayTracingPipelineFeatures{};
+		enabledRayTracingPipelineFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR;
+		enabledRayTracingPipelineFeatures.rayTracingPipeline = VK_TRUE;
 
-			VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
-			enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
-			enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
+		VkPhysicalDeviceAccelerationStructureFeaturesKHR enabledAccelerationStructureFeatures{};
+		enabledAccelerationStructureFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR;
+		enabledAccelerationStructureFeatures.accelerationStructure = VK_TRUE;
 
-			VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQueryFeatures{};
-			enabledRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
-			enabledRayQueryFeatures.rayQuery = VK_TRUE;
+		VkPhysicalDeviceRayQueryFeaturesKHR enabledRayQueryFeatures{};
+		enabledRayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
+		enabledRayQueryFeatures.rayQuery = VK_TRUE;
 
-			VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
-			physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
-			physicalDeviceFeatures2.features.shaderInt64 = VK_TRUE;
+		VkPhysicalDeviceFeatures2 physicalDeviceFeatures2{};
+		physicalDeviceFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+		physicalDeviceFeatures2.features.shaderInt64 = VK_TRUE;
 
-			enabledRayTracingPipelineFeatures.pNext = &enabledBufferDeviceAddresFeatures;
-			enabledAccelerationStructureFeatures.pNext = &enabledRayTracingPipelineFeatures;
-			enabledRayQueryFeatures.pNext = &enabledAccelerationStructureFeatures;
-			physicalDeviceFeatures2.pNext = &enabledRayQueryFeatures;
+		enabledRayTracingPipelineFeatures.pNext = &enabledBufferDeviceAddresFeatures;
+		enabledAccelerationStructureFeatures.pNext = &enabledRayTracingPipelineFeatures;
+		enabledRayQueryFeatures.pNext = &enabledAccelerationStructureFeatures;
+		physicalDeviceFeatures2.pNext = &enabledRayQueryFeatures;
 
-			create_info.pEnabledFeatures = nullptr;
-			create_info.pNext = &physicalDeviceFeatures2;
+		create_info.pEnabledFeatures = nullptr;
+		create_info.pNext = &physicalDeviceFeatures2;
 
-			err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
-			check_vk_result(err);
-		}
-		else
-		{
-			err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
-			check_vk_result(err);
-		}
+		err = vkCreateDevice(g_PhysicalDevice, &create_info, g_Allocator, &g_Device);
+		check_vk_result(err);
 
 		vkGetDeviceQueue(g_Device, g_QueueFamily, 0, &g_Queue);
 	}
 
-	// ��ʼ��vmaAllocator
+	// Initialize VMA allocator
 	vulkan::VulkanAllocator::CreateInfo allocatorInfo{};
 	allocatorInfo.device = g_Device;
 	allocatorInfo.instance = g_Instance;

@@ -11,14 +11,6 @@
 #include "vulkan/vulkan.h"
 #include "myvulkan/myVulkanInclude.h"
 
-#define VULKAN_RT 1
-
-#ifdef VULKAN_RT
-	const bool useVulkanRT = true;
-#else
-	const bool useVulkanRT = false;
-#endif
-
 class ImGui_ImplVulkanH_Window;
 
 extern VkAllocationCallbacks*		g_Allocator;
@@ -44,19 +36,6 @@ extern std::vector<std::function<void()>> s_VulkanRenderFuncQueue;
 void check_vk_result(VkResult err);
 
 struct GLFWwindow;
-
-struct RayTracingScratchBuffer
-{
-	uint64_t deviceAddress = 0;
-	std::shared_ptr<vulkan::VulkanMemoryResource> buffer;
-};
-
-// Ray tracing acceleration structure
-struct AccelerationStructure {
-	VkAccelerationStructureKHR handle;
-	uint64_t deviceAddress = 0;
-	std::shared_ptr<vulkan::VulkanMemoryResource> buffer;
-};
 
 namespace Walnut {
 	struct ApplicationSpecification

@@ -12,7 +12,6 @@ project "RayTracing"
       "../vendor/imgui",
       "../vendor/glfw/include",
       "../vendor/oidn/include/OpenImageDenoise",
-      "../vendor/bvh-master/src",
       "../vendor/myVulkan",
       "../vendor/VMA",
       "../Walnut/src",

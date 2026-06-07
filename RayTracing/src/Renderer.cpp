@@ -1,377 +1,19 @@
 #include "Renderer.h"
-#include "Walnut/Random.h"
 #include "Walnut/Input/Input.h"
 #include "walnut/Application.h"
 #include "Walnut/myVulkan/myVulkanInclude.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
 
-#include <format>
-#include <execution>
-#include "iostream"
 #include <functional>
 #include "Mesh.h"
+#include "Scene.h"
 
 #include "util.hpp"
 
-const Color g_Background_Color_Up(0.5, 0.7, 1.0, 1.0f);
-const Color g_Background_Color_Down(1.0f, 1.0f, 1.0f, 1.0f);
-
-
-
-#ifndef VULKAN_RT
-
-Renderer::Renderer()
-{
-}
-
-Renderer::Renderer(uint32_t width, uint32_t height)
-{
-}
-
-Renderer::~Renderer()
-{
-	delete[] finalImageData_;
-}
-
-void Renderer::OnResize(uint32_t width, uint32_t height)
-{
-	//
-	if (finalImage_)
+	Renderer::Renderer(const Scene& scene)
 	{
-		if (finalImage_->GetWidth() == width && finalImage_->GetHeight() == height)
-			return;
-		finalImage_->Resize(width, height);
-	}
-	else
-	{
-		finalImage_ = std::make_shared<Walnut::Image>(width, height, Walnut::ImageFormat::RGBA);
-	}
-	// Albedo
-	if (albedoImage_)
-	{
-		if (albedoImage_->GetWidth() == width && albedoImage_->GetHeight() == height)
-			return;
-		albedoImage_->Resize(width, height);
-	}
-	else
-	{
-		albedoImage_ = std::make_shared<Walnut::Image>(width, height, Walnut::ImageFormat::RGBA);
-	}
-	// Normal
-	if (normalImage_)
-	{
-		if (normalImage_->GetWidth() == width && normalImage_->GetHeight() == height)
-			return;
-		normalImage_->Resize(width, height);
-	}
-	else
-	{
-		normalImage_ = std::make_shared<Walnut::Image>(width, height, Walnut::ImageFormat::RGBA);
-	}
-	// Data
-	delete[] finalImageData_;
-	finalImageData_ = new uint32_t[width * height];
-	delete[] normalImageData_;
-	normalImageData_ = new uint32_t[width * height];
-	delete[] albedoImageData_;
-	albedoImageData_ = new uint32_t[width * height];
-
-	// MT
-	if (use_MT_Acceleration_)
-	{
-		MT_Vertical_Iter.resize(height);
-		for (uint32_t i = 0; i < height; i++)
-			MT_Vertical_Iter[i] = i;
-	}
-}
-
-void Renderer::Render(Camera& camera, RenderScene& scene, bool isAdaptiveNoise, bool isDenoise)
-{
-	uint32_t width = finalImage_->GetWidth();
-	uint32_t height = finalImage_->GetHeight();
-
-	// MT
-	if(use_MT_Acceleration_)
-	{ 
-		std::for_each(std::execution::par, MT_Vertical_Iter.begin(), MT_Vertical_Iter.end(),
-			[this, width, height, isAdaptiveNoise, &camera, &scene](uint32_t y)
-			{
-				for (uint32_t x = 0; x < width; x++)
-				{
-					TracingColors averageColors;
-					uint32_t index = y * width + x;
-					// 
-					double accumulateVariance = 0;
-					// Samples
-					for (int sample_count = 1; sample_count < max_render_samples_per_pixel_ + 1; sample_count++)
-					{
-						// Base Context
-							// Random Sample
-						float u = ((float)x + Walnut::Random::Float()) / (float)width;
-						float v = ((float)y + Walnut::Random::Float()) / (float)height;
-						// Ray
-						Ray ray = camera.GetNormalizedRay(u, v);
-
-						// Shader
-						TracingColors finalCols = Ray_Colors(ray, max_bounce_count_, scene, true);
-
-						// Accumulate
-						averageColors = finalCols / (float)sample_count + averageColors * (1.0f - 1.0f / (float)sample_count);
-						// Adaptive
-						if (isAdaptiveNoise)
-						{
-							double diffSqr = (finalCols.finalColor - averageColors.finalColor).NormSqr();
-							accumulateVariance += diffSqr;
-							// Debug
-							//if (x == width / 2 && y == height / 2) std::cout << std::format("r:{:.4f} g:{:.4f} b:{:.4f} ", finalCols.finalColor.r,finalCols.finalColor.g, finalCols.finalColor.b)
-							//	<< std::format("average--r:{:.4f} g:{:.4f} b:{:.4f} ", averageColors.finalColor.r,averageColors.finalColor.g, averageColors.finalColor.b)
-							//		<< std::format(" noise:{:.8f}", diffSqr) << std::endl;
-							
-							// Noise
-							if (sample_count >= min_render_samples_per_pixel_ && sample_count > 1)
-							{
-								double noise = accumulateVariance / ((float)(sample_count - 1) * std::sqrt(sample_count));
-								double norm = averageColors.finalColor.Norm();
-								double normalizeNoise = norm < 1e-8 ? 0 : noise / norm;
-								// Debug
-								//if (x == width / 2 && y == height / 2) std::cout << std::format("NoiseValue: {:.6f}", normalizeNoise) << std::endl;
-								if (normalizeNoise < min_render_noise_threshold) break;
-								//else std::cout << std::format("Noise is not enough: {:.10f}", normalizeNoise) << std::endl;
-							}
-						}
-					}
-			
-					finalImageData_[index] = averageColors.finalColor.GetColorData();
-					normalImageData_[index] = averageColors.normalColor.GetColorData();
-					albedoImageData_[index] = averageColors.albedoColor.GetColorData();
-				}
-			}
-		);
-	}
-	// NO MT
-	else
-	{
-		for (uint32_t x = 0; x < width; x++)		
-		{
-			for (uint32_t y = 0; y < height; y++)
-			{
-					TracingColors averageColors;
-					uint32_t index = y * width + x;
-					// 
-					double accumulateVariance = 0;
-					// Samples
-					for (int sample_count = 1; sample_count < max_render_samples_per_pixel_ + 1; sample_count++)
-					{
-						// Base Context
-							// Random Sample
-						float u = ((float)x + Walnut::Random::Float()) / (float)width;
-						float v = ((float)y + Walnut::Random::Float()) / (float)height;
-						// Ray
-						Ray ray = camera.GetNormalizedRay(u, v);
-
-						// Shader
-						TracingColors finalCols = Ray_Colors(ray, max_bounce_count_, scene, true);
-
-						// Accumulate
-						averageColors = finalCols / (float)sample_count + averageColors * (1.0f - 1.0f / (float)sample_count);
-						// Adaptive
-						if (isAdaptiveNoise)
-						{
-							double diffSqr = (finalCols.finalColor - averageColors.finalColor).NormSqr();
-							accumulateVariance += diffSqr;
-							// Debug
-							//if (x == width / 2 && y == height / 2) std::cout << std::format("r:{:.4f} g:{:.4f} b:{:.4f} ", finalCols.finalColor.r,finalCols.finalColor.g, finalCols.finalColor.b)
-							//	<< std::format("average--r:{:.4f} g:{:.4f} b:{:.4f} ", averageColors.finalColor.r,averageColors.finalColor.g, averageColors.finalColor.b)
-							//		<< std::format(" noise:{:.8f}", diffSqr) << std::endl;
-
-							// Noise
-							if (sample_count >= min_render_samples_per_pixel_ && sample_count > 1)
-							{
-								double noise = accumulateVariance / ((float)(sample_count - 1) * std::sqrt(sample_count));
-								double norm = averageColors.finalColor.Norm();
-								double normalizeNoise = norm < 1e-8 ? 0 : noise / norm;
-								// Debug
-								//if (x == width / 2 && y == height / 2) std::cout << std::format("NoiseValue: {:.6f}", normalizeNoise) << std::endl;
-								if (normalizeNoise < min_render_noise_threshold) break;
-								//else std::cout << std::format("Noise is not enough: {:.10f}", normalizeNoise) << std::endl;
-							}
-						}
-					}
-				finalImageData_[index] = averageColors.finalColor.GetColorData();
-				normalImageData_[index] = averageColors.normalColor.GetColorData();
-				albedoImageData_[index] = averageColors.albedoColor.GetColorData();
-			}
-		}
-	}
-
-	// Denoise
-	if (isDenoise)
-	{
-		denoiser_.reserve(width, height, isDenoseUsePrefilter);
-		// Set
-		auto albedoPtr = denoiser_.GetInputPointer(Denoise_Image_Type::albedo);
-		auto normalPtr = denoiser_.GetInputPointer(Denoise_Image_Type::normal);
-		auto colorPtr = denoiser_.GetInputPointer(Denoise_Image_Type::color);
-		for (size_t i = 0; i < width * height; i++)
-		{
-			size_t offset = i * 3;
-			for (int j = 0; j < 3; j++)
-			{
-				int bit = j * 8;
-				*(albedoPtr + offset + j) = static_cast<float>((albedoImageData_[i] & (0x000000ff << bit)) >> bit) / 255.0f;
-				*(normalPtr + offset + j) = static_cast<float>((normalImageData_[i] & (0x000000ff << bit)) >> bit) / 255.0f;
-				*(colorPtr + offset + j) = static_cast<float>((finalImageData_[i] & (0x000000ff << bit)) >> bit) / 255.0f;
-			}
-		}
-
-		// denoise
-		auto finalPtr = denoiser_.execute();
-
-		// Get Result to my Buffer
-		for (size_t i = 0; i < width * height; i++)
-		{
-			size_t offset = i * 3;
-			Color col(0, 0, 0, 1);
-
-			col.r = *(colorPtr + offset + 0);
-			col.g = *(colorPtr + offset + 1);
-			col.b = *(colorPtr + offset + 2);
-
-			finalImageData_[i] = col.GetColorData();
-			// Get Prefilter Result
-			if constexpr (isDenoseUsePrefilter)
-			{
-				Color albedoCol(0, 0, 0, 1);
-				Color normalCol(0, 0, 0, 1);
-
-				albedoCol.r = *(albedoPtr + offset + 0);
-				albedoCol.g = *(albedoPtr + offset + 1);
-				albedoCol.b = *(albedoPtr + offset + 2);
-
-				normalCol.r = *(normalPtr + offset + 0);
-				normalCol.g = *(normalPtr + offset + 1);
-				normalCol.b = *(normalPtr + offset + 2);
-
-				albedoImageData_[i] = albedoCol.GetColorData();
-				normalImageData_[i] = normalCol.GetColorData();
-			}
-		}
-
-	}
-	// Gamma
-	for (size_t i = 0; i < width * height; i++)
-	{
-		finalImageData_[i] = uint_Power(finalImageData_[i], 0.45f);
-		albedoImageData_[i] = uint_Power(albedoImageData_[i], 0.45f);
-	}
-
-
-	// Set Image
-	finalImage_->SetData(finalImageData_);
-	normalImage_->SetData(normalImageData_);
-	albedoImage_->SetData(albedoImageData_);
-}
-
-// Main Shader
-TracingColors Renderer::Ray_Colors(const Ray& ray, int depth, RenderScene& scene, bool isFirstHit)
-{
-	if (depth < 0)
-	{
-		if (Walnut::Random::Float() < 0.5f)
-		{
-			TracingColors colos;
-			colos.finalColor = Color(0, 0, 0, 1);
-			return colos;
-		}
-	}
-
-	HitResult res;
-
-	if (scene.hit(ray, 0.001, infinity, res))
-	{
-		Ray scatter;
-		TracingColors colors;
-		if (!res.material)
-		{
-			std::cout << "[Error Renderer] material is Null" << std::endl;
-		}
-		Color emitColor = res.material->emitted(res.u, res.v, res.hitPosition);
-		Color inderictAttenuation(0);
-		if (res.material->scatter(ray, res, inderictAttenuation, scatter))
-		{
-			if (isFirstHit)
-			{
-				colors.normalColor = res.hitNormal;
-				colors.albedoColor = inderictAttenuation;
-			}
-			// Indirected Light
-			auto scatterCols = Ray_Colors(scatter, depth - 1, scene, false);
-			scatterCols.finalColor = scatterCols.finalColor.MulWithoutAlpha(inderictAttenuation);
-			// Directed Light
-			float prob;
-			// ��Դ��Ҫ�Բ������������ȸߵĹ�Դ
-			if (auto light = scene.pickLightWeighted(prob))
-			{
-				auto sample = light->sample();
-				Color directCol;
-				// ���� ֱ�ӹ�Դ��˥�� �� ����ʱ��˥����������Ҫ�Բ���ʱѡȡ��Դ�ĸ��ʣ�����
-				if (CalculateDirectLightAttenuation(sample, ray, res, scene, directCol))
-				{
-					directCol = directCol / prob;
-					scatterCols.finalColor = (scatterCols.finalColor + directCol) / 2.0f;				
-				}
-			}
-
-			colors.finalColor = emitColor + scatterCols.finalColor;
-			return colors;
-		}
-		if (isFirstHit)
-		{
-			colors.normalColor = res.hitNormal;
-			colors.albedoColor = emitColor;
-		}
-		colors.finalColor = emitColor;
-		return colors;
-	}
-
-	glm::vec3 unit_direction = glm::normalize(ray.direction());
-	float a = 0.5f * (unit_direction.y + 1);
-
-	TracingColors colors;
-	colors.finalColor = Color::Lerp(g_Background_Color_Down, g_Background_Color_Up, a);
-	if (isFirstHit)
-	{
-		colors.normalColor = unit_direction * -1.0f;
-		colors.albedoColor = colors.finalColor;
-	}
-	return colors;
-}
-
-bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, const Ray& ray_in, const HitResult& hitres, RenderScene& scene, Color& resColor)
-{
-	glm::vec3 dir = lightSample.samplePosition - hitres.hitPosition;
-	Ray ray_out(hitres.hitPosition, dir);
-	HitResult res;
-	float epison = 0.0001f;
-	if (scene.hit(ray_out, epison, 1.0f - epison, res))
-	{
-		return false;
-	}
-	float theta1 = glm::dot(-dir, lightSample.rayDirection);
-	if (theta1 <= 0) return false;
-	float dis = glm::length(dir);
-
-	resColor = hitres.material->getAttenuation(ray_in, hitres, ray_out);
-	resColor = resColor.MulWithoutAlpha(lightSample.sampleColor) * theta1 / (dis * dis);
-	return true;
-}
-
-#else
-
-	Renderer::Renderer()
-	{
-		InitRayTracing();
+		InitRayTracing(scene);
 	}
 
 	Renderer::~Renderer()
@@ -379,6 +21,11 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		CleanUpRayTracing();
 	}
 
+	void Renderer::SetScene(const Scene& scene)
+	{
+		scene_ = &scene;
+		syncSceneResources();
+	}
 
 	void Renderer::OnResize(uint32_t width, uint32_t height)
 	{
@@ -415,23 +62,22 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			lastFrameWorldPositionImage_ = std::make_shared<Walnut::StorageImage>(width, height, Walnut::ImageFormat::RGBA32F, g_pCommandPool);
 		}
 
-		// 
 		updateDescriptorSets();
 
 		isNeedTransition = false;
 
 	}
 
-	void Renderer::Render(Camera& camera, RenderScene& scene, bool isAdaptiveNoise, bool isDenoise)
+	void Renderer::Render(Camera& camera, bool isAdaptiveNoise, bool isDenoise)
 	{
-		// Swap
+		syncSceneResources();
+
 		outputFinalImage_.swap(lastFrameFinalImage_);
 		nowFrameRadianceImage_.swap(lastFrameVarianceImage_);
 		nowFrameAlbedoImage_.swap(lastFrameAlbedoImage_);
 		nowFrameNormalImage_.swap(lastFrameNormalImage_);
 		nowFrameWorldPositionImage_.swap(lastFrameWorldPositionImage_);
 
-		// Add callBack
 		ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
 		auto renderFunc = std::bind(&Renderer::buildCommandBuffers, this, wd, &camera);
 		s_VulkanRenderFuncQueue.push_back(renderFunc);
@@ -439,9 +85,9 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 	}
 
 
-	void Renderer::InitRayTracing()
+	void Renderer::InitRayTracing(const Scene& scene)
 	{
-		// Get ray tracing pipeline properties, which will be used later on in the sample
+		scene_ = &scene;
 		rtBackend_ = std::make_unique<rt::VulkanRTBackend>(rt::VulkanRTBackend::CreateInfo{
 			.device = g_Device,
 			.physicalDevice = g_PhysicalDevice,
@@ -451,12 +97,9 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			.dynamicLoader = &g_dynamicLoader
 		});
 
-			// Get acceleration structure properties, which will be used later on in the sample
-
 		frameDatas_.resize(g_MinImageCount);
 
-		createBottomLevelAccelerationStructure();
-		createTopLevelAccelerationStructure();
+		rebuildSceneResources(scene);
 		createUniformBuffer();
 		createRayTracingPipeline();
 		createDenoisePipeline();
@@ -464,26 +107,66 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		createDescriptorSets();
 	}
 
-	void Renderer::createBottomLevelAccelerationStructure()
+	void Renderer::syncSceneResources()
 	{
-		//Setup identity transform matrix
+		if (!scene_ || !rtBackend_)
+		{
+			return;
+		}
+
+		if (scene_->GetRevision() == uploadedSceneRevision_)
+		{
+			return;
+		}
+
+		vkDeviceWaitIdle(g_Device);
+		rebuildSceneResources(*scene_);
+		if (rtDescriptorSetLayout_ != VK_NULL_HANDLE && outputFinalImage_)
+		{
+			updateDescriptorSets();
+		}
+	}
+
+	void Renderer::rebuildSceneResources(const Scene& scene)
+	{
+		releaseSceneResources();
+		createBottomLevelAccelerationStructure(scene);
+		createTopLevelAccelerationStructure();
+		uploadedSceneRevision_ = scene.GetRevision();
+	}
+
+	void Renderer::releaseSceneResources()
+	{
+		if (rtBackend_)
+		{
+			rtBackend_->DestroyAccelerationStructure(bottomLevelAS_);
+			rtBackend_->DestroyAccelerationStructure(topLevelAS_);
+		}
+
+		delete transformBuffer_;
+		transformBuffer_ = nullptr;
+		delete geometryNodeBuffer_;
+		geometryNodeBuffer_ = nullptr;
+		delete lightsBuffer_;
+		lightsBuffer_ = nullptr;
+		model_.reset();
+	}
+
+	void Renderer::createBottomLevelAccelerationStructure(const Scene& scene)
+	{
 		VkTransformMatrixKHR transformMatrix = {
 			1.0f, 0.0f, 0.0f, 0.0f,
 			0.0f, 1.0f, 0.0f, 0.0f,
 			0.0f, 0.0f, 1.0f, 0.0f
 		};
 
-		//glm::mat4 rot = glm::rotate(glm::mat4(1), glm::radians(180.0f), glm::vec3(0.0, 0.0, 1.0));
-		//glm::mat3x4 transformMatrix = glm::mat3x4(glm::transpose(rot));
-		// Transform buffer
 		transformBuffer_ = g_pVkMemoryAllocator->createBuffer(sizeof(VkTransformMatrixKHR),
 			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 			VMA_MEMORY_USAGE_CPU_ONLY).release();
 		transformBuffer_->uploadData(&transformMatrix, VK_WHOLE_SIZE);
 
-		// Load
 		model_ = std::make_shared<RTModel>(g_pVkMemoryAllocator, g_pCommandPool, g_Queue);
-		model_->LoadModel("assets/model/cornel_box.fbx");
+		model_->UploadScene(scene);
 
 		VkDeviceOrHostAddressConstKHR vertexBufferDeviceAddress{};
 		VkDeviceOrHostAddressConstKHR indexBufferDeviceAddress{};
@@ -493,7 +176,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		indexBufferDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(model_->indices.buffer->buffer());
 		transformBufferDeviceAddress.deviceAddress = rtBackend_->GetBufferDeviceAddress(transformBuffer_->buffer());
 
-		// ============ Build==============
 		std::vector<uint32_t> maxPrimitiveCounts;
 		std::vector<VkAccelerationStructureGeometryKHR> geometries;
 		std::vector<VkAccelerationStructureBuildRangeInfoKHR> accelerationBuildStructureRangeInfos;
@@ -506,7 +188,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			VkDeviceOrHostAddressConstKHR indexBufferDeviceAddressOffseted {};
 			indexBufferDeviceAddressOffseted.deviceAddress = indexBufferDeviceAddress.deviceAddress + mesh->geometry.firstIndex * sizeof(uint32_t);
 
-			// 
 			VkAccelerationStructureGeometryKHR accelerationStructureGeometry{};
 			accelerationStructureGeometry.sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR;
 			accelerationStructureGeometry.flags = VK_GEOMETRY_OPAQUE_BIT_KHR;
@@ -525,17 +206,14 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 			geometries.push_back(accelerationStructureGeometry);
 
-			//
 			uint32_t numTriangle = mesh->geometry.indexCount / 3;
 			VkAccelerationStructureBuildRangeInfoKHR buildRangeInfo{};
 			buildRangeInfo.primitiveCount = numTriangle;
 
 			accelerationBuildStructureRangeInfos.push_back(buildRangeInfo);
 
-			// 
 			maxPrimitiveCounts.push_back(numTriangle);
 
-			// 
 			GeometryNode node;
 			node.VertexBufferDeviceAddress = vertexBufferDeviceAddress.deviceAddress;
 			node.IndexBufferDeviceAddress = indexBufferDeviceAddressOffseted.deviceAddress;
@@ -573,6 +251,33 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		buildDesc.primitiveCounts = maxPrimitiveCounts;
 		bottomLevelAS_ = rtBackend_->BuildAccelerationStructure(buildDesc);
 
+		UniformLightsData lightData{};
+		lightData.areaLightCount = static_cast<uint32_t>(std::min<size_t>(scene.GetAreaLights().size(), MAX_AREA_LIGHT_NUM));
+		for (uint32_t i = 0; i < lightData.areaLightCount; i++)
+		{
+			const AreaLight& source = scene.GetAreaLights()[i];
+			AreaLightData& target = lightData.areaLightsData[i];
+			target.beginPos = source.beginPos;
+			target.u = source.u;
+			target.v = source.v;
+			target.color = source.color;
+			target.rayDir = source.rayDir;
+		}
+
+		lightData.radiusLightCount = static_cast<uint32_t>(std::min<size_t>(scene.GetRadiusLights().size(), MAX_RADIUS_LIGHT_NUM));
+		for (uint32_t i = 0; i < lightData.radiusLightCount; i++)
+		{
+			const RadiusLight& source = scene.GetRadiusLights()[i];
+			RadiusLightData& target = lightData.radiusLightsData[i];
+			target.centerPos = source.centerPos;
+			target.color = source.color;
+			target.radius = source.radius;
+		}
+
+		lightsBuffer_ = new vulkan::VulkanLocalBuffer(g_pVkMemoryAllocator, sizeof(UniformLightsData),
+			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, copierInfo);
+		lightsBuffer_->UploadMemory(&lightData, sizeof(UniformLightsData), 0);
+
 	}
 
 	void Renderer::createTopLevelAccelerationStructure()
@@ -590,7 +295,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		instance.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
 		instance.accelerationStructureReference = bottomLevelAS_.deviceAddress;
 
-		// Buffer for instance data
 		vulkan::VulkanMemoryResource* instancesBuffer = g_pVkMemoryAllocator->createBuffer(sizeof(VkAccelerationStructureInstanceKHR),
 			VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR,
 			VMA_MEMORY_USAGE_CPU_ONLY).release();
@@ -646,31 +350,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 				VMA_MEMORY_USAGE_AUTO_PREFER_HOST, VMA_ALLOCATION_CREATE_MAPPED_BIT).release();
 
 		}
-
-		// Lights
-		UniformLightsData lightData{};
-		// lightData.areaLightCount = 1;
-		lightData.radiusLightCount = 1;
-		
-		auto& light1 = lightData.areaLightsData[0];
-		light1.beginPos = glm::vec3(-0.215f, 0.924f, -0.175f);
-		light1.u = glm::vec3(0.43f, 0, 0);
-		light1.v = glm::vec3(0, 0, 0.35f);
-		light1.color = glm::vec3(1.15f, 0.8f, 0.27f) * 80.0f;
-		light1.rayDir = glm::vec3(0, -1, 0);
-
-		auto& light2 = lightData.radiusLightsData[0];
-		light2.centerPos = glm::vec3(0, 0.8f, 0);
-		light2.color = glm::vec3(1.15f, 0.8f, 0.27f) * 1.0f;
-		light2.radius = 0.15f;
-
-		vulkan::VulkanLocalBuffer::CopierCreateInfo copierInfo {
-				.commandPool = g_pCommandPool,
-				.transferQueue = g_Queue
-		};
-		lightsBuffer_ = new vulkan::VulkanLocalBuffer(g_pVkMemoryAllocator, sizeof(UniformLightsData),
-		VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, copierInfo);
-		lightsBuffer_->UploadMemory(&lightData, sizeof(UniformLightsData), 0);
 
 		// Denosie pass
 		DenoiseUniformData denoiseData{};	
@@ -800,7 +479,10 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 			writer1.write_buffer(6, frameDatas_[i].RTUniformBuffer_->buffer(), sizeof(CameraUniformData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 			writer1.write_buffer(7, geometryNodeBuffer_->buffer(), geometryNodeBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 			writer1.write_buffer(8, lightsBuffer_->buffer(), lightsBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-			writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
+			if (g_texturePool->GetImageCount() > 0)
+			{
+				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
+			}
 			writer1.update_set(g_Device, frameDatas_[i].rtDescriptorSet_);
 
 			for (size_t j = 0; j < frameDatas_[i].denoiseDescriptorSets_.size(); j++)
@@ -822,10 +504,18 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		{
 				// Write
 			vulkan::DescriptorWriter writer1;
+			writer1.write_structure(0, 1, &topLevelAS_.handle, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
 			writer1.write_image(1, nowFrameRadianceImage_->GetImageView(), nowFrameRadianceImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 			writer1.write_image(2, nowFrameAlbedoImage_->GetImageView(), nowFrameAlbedoImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 			writer1.write_image(3, nowFrameNormalImage_->GetImageView(), nowFrameNormalImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 			writer1.write_image(4, nowFrameWorldPositionImage_->GetImageView(), nowFrameWorldPositionImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+			writer1.write_buffer(6, frameDatas_[i].RTUniformBuffer_->buffer(), sizeof(CameraUniformData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			writer1.write_buffer(7, geometryNodeBuffer_->buffer(), geometryNodeBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+			writer1.write_buffer(8, lightsBuffer_->buffer(), lightsBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+			if (g_texturePool->GetImageCount() > 0)
+			{
+				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
+			}
 			writer1.update_set(g_Device, frameDatas_[i].rtDescriptorSet_);
 
 			// Denoise Pass 
@@ -842,7 +532,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 				writer2.write_image(11, lastFrameNormalImage_->GetImageView(), lastFrameNormalImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 				writer2.write_image(12, lastFrameWorldPositionImage_->GetImageView(), lastFrameWorldPositionImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
-				// ��3��4��1��2����ƹ��Blit
 				if (j == 0 || j == 2 || j == 4)
 				{
 					writer2.write_image(2, outputFinalImage_->GetImageView(), outputFinalImage_->GetSampler(), VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
@@ -860,23 +549,18 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 	void Renderer::CleanUpRayTracing()
 	{
-		delete transformBuffer_;
+		releaseSceneResources();
 		for (size_t i = 0; i < frameDatas_.size(); i++)
 		{
 			delete frameDatas_[i].RTUniformBuffer_;
 			delete frameDatas_[i].DenoiseUniformBuffer_;
 		}
-		delete lightsBuffer_;
-		delete geometryNodeBuffer_;
 		shaderBindingTable_.Reset();
 
 		for (size_t i = 0; i < denoiseUniformBuffers_.size(); i++)
 		{
 			delete denoiseUniformBuffers_[i];
 		}
-
-		rtBackend_->DestroyAccelerationStructure(bottomLevelAS_);
-		rtBackend_->DestroyAccelerationStructure(topLevelAS_);
 
 		rtPipeline_.Destroy();
 		vkDestroyDescriptorSetLayout(g_Device, rtDescriptorSetLayout_, nullptr);
@@ -908,7 +592,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 		nowFrameCount++;
 		frameDatas_[wd->FrameIndex].RTUniformBuffer_->uploadData(&cameraData, sizeof(CameraUniformData), 0);
 
-			// Last Frame Camera For Donoise	
+			// Last frame camera for denoise
 		frameDatas_[wd->FrameIndex].DenoiseUniformBuffer_->uploadData(&lastFrameCameraVPMatrix_, sizeof(DenoiseCameraUniformData), 0);
 		lastFrameCameraVPMatrix_ = camera.GetPreVPMatrix();
 
@@ -933,7 +617,7 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		constexpr uint32_t Group_Size = 16;
 
-		uint32_t groupCountX = (width + Group_Size - 1) / Group_Size;  // ����ȡ��
+		uint32_t groupCountX = (width + Group_Size - 1) / Group_Size;
 		uint32_t groupCountY = (height + Group_Size - 1) / Group_Size;
 
 		// Ping-Pong Blit
@@ -961,7 +645,6 @@ bool Renderer::CalculateDirectLightAttenuation(const LightSample& lightSample, c
 
 		isNeedTransition = true;
 	}
-#endif
 
 Camera::Camera(glm::vec3 position, glm::vec3 front)
 	:position_(position)
@@ -1011,7 +694,7 @@ void Camera::Tick(float ts, uint32_t width, uint32_t height)
 
 	front_ = normalize(front_);
 	// Update Screen
-	float focusMagnification = DOF_focus_distance_ / focus_distance_;	// ���ս�ƽ�������FOVƽ��ķŴ�?? ��
+	float focusMagnification = DOF_focus_distance_ / focus_distance_;
 		// FOV
 	horizontal_ = normalize(glm::cross(front_, up_));
 	vertical_ = normalize(glm::cross(horizontal_, front_));
@@ -1028,29 +711,8 @@ void Camera::Tick(float ts, uint32_t width, uint32_t height)
 	ViewMatrix_ = glm::lookAt(position_, position_ + front_, up_);
 	float sensorWidth = width == 0 ? 1.0f : (float)width / (float)height;
 	float dialogue = std::sqrt(sensorWidth * sensorWidth + 1 * 1);
-	float FOV = 2 * atan(dialogue / (2 * focus_distance_)) * 180 / M_PI;
+	float FOV = glm::degrees(2.0f * std::atan(dialogue / (2.0f * focus_distance_)));
 	ProjMatrix_ = glm::perspective(glm::radians(FOV), sensorWidth, 0.1f, 100.0f);
 	preVPMatrix_ = ProjMatrix_ * ViewMatrix_;
 }
 
-Ray Camera::GetRay(float u, float v)
-{
-	auto src = position_;
-	auto tar = screen_left_down_corner_ + u * horizontal_ + (1.0f - v) * vertical_;
-
-	if (useDOF_)
-	{
-		auto lens = Walnut::Random::InUnitCircle() * lens_radius_;
-		glm::vec3 offset = lens.x * horizontal_ + lens.y * vertical_;
-		src += offset;
-		tar = focus_left_down_corner_ + u * focus_horizontal_ + (1.0f - v) * focus_vertical_;
-	}
-
-	return Ray(src, tar - src);
-}
-
-Ray Camera::GetNormalizedRay(float u, float v)
-{
-	auto ray = GetRay(u, v);
-	return Ray(ray.origin(), glm::normalize(ray.direction()));
-}

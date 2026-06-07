@@ -3,19 +3,61 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_vulkan.h"
 
-#include "Walnut/Random.h"
 #include "Walnut/Image.h"
 #include "Walnut/Timer.h"
 #include "Renderer.h"
-#include "Ray.h"
-#include "Mesh.h"
+#include "Scene.h"
+
+#include <filesystem>
+#include <memory>
+#include <string>
 
 using namespace Walnut;
+
+namespace
+{
+	std::string ResolveDefaultModelPath()
+	{
+		const std::filesystem::path candidates[] = {
+			"assets/model/cornel_box.fbx",
+			"RayTracing/assets/model/cornel_box.fbx",
+			"../../RayTracing/assets/model/cornel_box.fbx",
+			"../../../RayTracing/assets/model/cornel_box.fbx"
+		};
+
+		for (const std::filesystem::path& candidate : candidates)
+		{
+			if (std::filesystem::exists(candidate))
+			{
+				return candidate.generic_string();
+			}
+		}
+
+		return candidates[0].generic_string();
+	}
+
+	Scene CreateDefaultScene()
+	{
+		Scene scene;
+
+		auto cornellBox = scene.LoadModel(ResolveDefaultModelPath());
+		scene.CreateEntity("Cornell Box", cornellBox);
+
+		RadiusLight light;
+		light.centerPos = glm::vec3(0.0f, 0.8f, 0.0f);
+		light.color = glm::vec3(1.15f, 0.8f, 0.27f);
+		light.radius = 0.15f;
+		scene.AddRadiusLight(light);
+
+		return scene;
+	}
+}
 
 class ExampleLayer : public Walnut::Layer
 {
 public:
 	ExampleLayer()
+		: scene_(CreateDefaultScene()), renderer_(std::make_unique<Renderer>(scene_))
 	{
 
 	}
@@ -26,7 +68,6 @@ public:
 		// Renderer
 		ImGui::LabelText("", "Ray Tracing Info:");
 
-		// ����֡�ʣ�����Ӧʱ��
 		float elapsed = timer.ElapsedMillis();
 		accumulateTime += elapsed;
 		accumulateFrameCount++;
@@ -60,14 +101,6 @@ public:
 		ImGui::LabelText("", "	Render:");
 		ImGui::InputFloat("Render Max Sample Count", &max_render_sample_count_, 1, 0, "%.0f");
 		ImGui::InputFloat("Render Min Sample Count", &min_render_sample_count_, 1, 0, "%.0f");
-		if (ImGui::Checkbox("Use MT Acceleration?", &isUseMT_))
-		{
-			// renderer_.SetUseMT(isUseMT_);
-		}
-		if (ImGui::Checkbox("Use Bvh Acceleration?", &isUseBvh_))
-		{
-			scene_.SetUseBvh(isUseBvh_);
-		}
 		ImGui::Checkbox("Use Denoise?", &isDenoise_);
 		ImGui::Combo("Output Type", &imageType_, imageTypes_, IM_ARRAYSIZE(imageTypes_));
 
@@ -90,16 +123,10 @@ public:
 			camera_.SetUseDOF(isDOF_);
 		}
 
-		ImGui::LabelText("", "\nLight Info:");
-		if(ImGui::InputFloat("Light Intensity", &lightIntensity_, 1, 0, "%.0f"))
-		{
-			light_->SetPower(lightIntensity_);
-		}
-
 		// Render
 		if (ImGui::Button("Render"))
 		{
-			// Render();
+			Render();
 		}
 		if (!isLockImage)
 		{
@@ -120,21 +147,17 @@ public:
 		viewportWidth_ = ImGui::GetContentRegionAvail().x;
 		viewportHeight_ = ImGui::GetContentRegionAvail().y;
 
-#ifdef VULKAN_RT
 		std::shared_ptr<StorageImage> image;
-#else
-		std::shared_ptr<Image> image;
-#endif
 		switch (imageType_)
 		{
 		case 0:
-			image = renderer_.GetFinalImage();
+			image = renderer_->GetFinalImage();
 			break;
 		case 1:
-			image = renderer_.GetAlbedoImage();
+			image = renderer_->GetAlbedoImage();
 			break;
 		case 2:
-			image = renderer_.GetNormalImage();
+			image = renderer_->GetNormalImage();
 			break;
 		}
 
@@ -148,18 +171,17 @@ public:
 	virtual void OnUpdate(float ts) override
 	{
 		camera_.Tick(ts, viewportWidth_, viewportHeight_);
-		scene_.Update(ts);
 	}
 
 	void Render()
 	{
 		// Resize
-		renderer_.OnResize(viewportWidth_, viewportHeight_);
-		renderer_.SetMaxRenderSampleCount(max_render_sample_count_);
-		renderer_.SetMinRenderSampleCount(min_render_sample_count_);
-		renderer_.SetMaxBounceCount(Default_Max_Bounce_Count_Per_Ray_Render);
+		renderer_->OnResize(viewportWidth_, viewportHeight_);
+		renderer_->SetMaxRenderSampleCount(max_render_sample_count_);
+		renderer_->SetMinRenderSampleCount(min_render_sample_count_);
+		renderer_->SetMaxBounceCount(Default_Max_Bounce_Count_Per_Ray_Render);
 		// Render
-		renderer_.Render(camera_, scene_, true, isDenoise_);
+		renderer_->Render(camera_, true, isDenoise_);
 		isLockImage = true;
 
 	}
@@ -169,18 +191,18 @@ public:
 		if (viewportWidth_ == 0 || viewportHeight_ == 0) return;
 
 		// Resize
-		renderer_.OnResize(viewportWidth_, viewportHeight_);
-		renderer_.SetMaxRenderSampleCount(max_render_sample_count_);
-		renderer_.SetMaxPreviewSampleCount(max_preview_sample_count_);
-		renderer_.SetMaxBounceCount(Default_Max_Bounce_Count_Per_Ray_Preview);
+		renderer_->OnResize(viewportWidth_, viewportHeight_);
+		renderer_->SetMaxRenderSampleCount(max_render_sample_count_);
+		renderer_->SetMaxPreviewSampleCount(max_preview_sample_count_);
+		renderer_->SetMaxBounceCount(Default_Max_Bounce_Count_Per_Ray_Preview);
 		// Render
-		renderer_.Render(camera_, scene_, false, false);
+		renderer_->Render(camera_, false, false);
 
 	}
 
 private:
-	Renderer renderer_;
-	RenderScene scene_;
+	Scene scene_;
+	std::unique_ptr<Renderer> renderer_;
 	Camera camera_ {Camera(glm::vec3(0, 0, 4), glm::vec3(0, 0,-1))};
 
 	Timer timer;
@@ -201,17 +223,8 @@ private:
 	bool isLockImage {false};
 	const char* imageTypes_[3] = { "FinalColor", "Albedo", "Normal"};
 	int imageType_ = 0;
-	bool isUseMT_ = true;
-	bool isUseBvh_ = true;
 	bool isDenoise_ = true;
 	bool isDOF_ = true;
-
-		// Sphere 
-	std::shared_ptr<AreaLight> light_;
-	float sphereCol_[3] = { 0.6f, 0.6f, 0.6f };
-	float rough_ = 0;
-	float refractive_ = 1.3f;
-	float lightIntensity_ = 5.0f;
 };
 
 Walnut::Application* Walnut::CreateApplication(int argc, char** argv)

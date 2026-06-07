@@ -1,0 +1,11 @@
+{
+  "rayTracing": {
+    "raygen": "../shaders/rt/raygen.rgen.spv",
+    "miss": "../shaders/rt/miss.rmiss.spv",
+    "shadow": "../shaders/rt/shadow.rmiss.spv",
+    "closesthit": "../shaders/rt/closesthit.rchit.spv"
+  },
+  "denoise": {
+    "svgf": "../shaders/denoise/svgf.comp.spv"
+  }
+}

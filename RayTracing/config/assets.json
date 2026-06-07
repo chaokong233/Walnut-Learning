@@ -1,0 +1,8 @@
+{
+  "models": {
+    "cornell_box": {
+      "path": "../assets/model/cornel_box.fbx"
+    }
+  },
+  "textures": {}
+}

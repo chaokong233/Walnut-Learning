@@ -229,24 +229,29 @@ vulkan::VulkanImage::VulkanImage(VulkanAllocator* allocator, const CreateInfo& c
 
 vulkan::VulkanLoadedTexture::VulkanLoadedTexture(VulkanAllocator* allocator, const std::string& path, CopierCreateInfo createInfo, VkBufferUsageFlags usages)
 {
+    srcPath = path;
+
     if (!allocator)
     {
         throw std::runtime_error("allocator is Null");
     }
 
     // Load
-    int texWidth, texHeight, texChannels;
+    int texWidth = 0;
+    int texHeight = 0;
+    int texChannels = 0;
     stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
     width_ = texWidth;
     height_ = texHeight;
 
-    VkDeviceSize imageSize = texWidth * texHeight * 4;
-    texSize_ = imageSize;
     if (!pixels || width_ <= 0 || height_ <= 0)
     {
         std::cout << "load texture failed, path is not exsit";
         return;
     }
+
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+    texSize_ = static_cast<uint32_t>(imageSize);
     
     // Init
         //

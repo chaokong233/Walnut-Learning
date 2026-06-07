@@ -21,6 +21,8 @@
 
 class Camera;
 class ImGui_ImplVulkanH_Window;
+class ResourceConfig;
+class ResourceManager;
 class RTModel;
 class Scene;
 
@@ -73,7 +75,7 @@ struct UniformLightsData
 class Renderer
 {
 public:
-	explicit Renderer(const Scene& scene);
+	Renderer(const Scene& scene, const ResourceConfig& resourceConfig, ResourceManager& resourceManager);
 	~Renderer();
 
 	void SetScene(const Scene& scene);
@@ -115,6 +117,8 @@ private:
 
 private:
 	const Scene* scene_{ nullptr };
+	const ResourceConfig* resourceConfig_{ nullptr };
+	ResourceManager* resourceManager_{ nullptr };
 	uint64_t uploadedSceneRevision_{ 0 };
 	std::shared_ptr<RTModel> model_;
 
@@ -182,12 +186,19 @@ public:
 	Camera(glm::vec3 position, glm::vec3 front);
 
 	void Tick(float ts, uint32_t width, uint32_t height);
+	void SetView(glm::vec3 position, glm::vec3 front);
 
 	void SetFocusDistance(float dis) { focus_distance_ = dis; }
 	void SetDOFFocusDistance(float dis) { DOF_focus_distance_ = dis; }
 	void SetDOFLensRadius(float radius) { lens_radius_ = radius; }
 	void SetUseDOF(bool use) { useDOF_ = use; }
 
+	inline glm::vec3 GetPosition() const { return position_; }
+	inline glm::vec3 GetFront() const { return front_; }
+	inline float GetFocusDistance() const { return focus_distance_; }
+	inline float GetDOFFocusDistance() const { return DOF_focus_distance_; }
+	inline float GetDOFLensRadius() const { return lens_radius_; }
+	inline bool IsDOFEnabled() const { return useDOF_; }
 	inline glm::mat4 GetPreVPMatrix() const { return preVPMatrix_; }
 	inline glm::mat4 GetViewMatrix() const { return ViewMatrix_; }
 	inline glm::mat4 GetProjMatrix() const { return ProjMatrix_; }

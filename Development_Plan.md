@@ -30,14 +30,14 @@
   - `scene.json`：场景序列化，包含场景中的实体、位置、材质。
   - `assets.json`：全局纹理、模型资源注册表。
   - `shaders.json`：核心 Shader 路径与编译配置。
-- **目录重构**：优化当前工程，分离 `src/`、`assets/`、`shaders/`、`config/` 等目录。
-- **资源管理器**：实现 `ResourceManager` 类，统一处理模型（tinyobjloader）和纹理（stb_image）的加载、缓存与 Vulkan 资源绑定。
+- **打包目录**：在premake文件里添加编译后处理的命令语句，将核心的shaders，configs文件和自带的用于测试和作为默认项的模型和贴图，自动打包至可执行文件的目录下。
+- **资源管理器**：实现 `ResourceManager` 类，统一处理模型和纹理（stb_image）的加载、缓存与 Vulkan 资源绑定。
 
 ## 5. UI层架构与多线程渲染改造
 **现状**：`ExampleLayer` 直接持有 `Renderer`，渲染与 UI 逻辑同步，渲染复杂场景时会导致编辑器卡顿。
 **计划**：
 - **架构解耦**：将 UI / 逻辑更新与渲染剥离，分离出**主线程**（负责系统事件、UI 绘制、场景逻辑更新）和**渲染线程**（负责 Vulkan 命令录制与提交）。
-- **数据同步**：采用双缓冲（Double Buffering）或渲染队列（Render Queue）机制，每帧将主线程的场景快照（Render Packet）同步给渲染线程。
+- **数据同步**：采用渲染队列（Render Queue）机制，每帧将主线程的场景快照（Render Packet）同步给渲染线程。
 
 ## 6. 编辑器功能完善
 **现状**：UI 层残留无效控件，缺乏实际的场景编辑能力。
@@ -46,5 +46,5 @@
 - **Inspector Panel**：编辑选中实体的 Transform（平移、旋转、缩放）和材质属性。
 - **Render Settings Panel**：
   - 支持切换渲染模式（实时预览低采样率 vs 最终高采样率渲染）。
-  - 调整环境光、曝光、降噪（Denoiser）开关等。
-- **Viewport Panel**：将渲染结果作为 ImGui Texture 绘制到窗口中，支持类似 Blender 的视口操作。
+  - 调整最大\小sample数，自适应采样阈值，降噪（Denoiser）开关等。
+- **Viewport Panel**：将渲染结果作为 ImGui Texture 绘制到窗口中，支持视口操作。

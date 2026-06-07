@@ -1,4 +1,6 @@
 #include "Renderer.h"
+#include "ResourceConfig.h"
+#include "ResourceManager.h"
 #include "Walnut/Input/Input.h"
 #include "walnut/Application.h"
 #include "Walnut/myVulkan/myVulkanInclude.h"
@@ -11,8 +13,57 @@
 
 #include "util.hpp"
 
-	Renderer::Renderer(const Scene& scene)
+namespace
+{
+	glm::vec3 NormalizeOr(const glm::vec3& value, const glm::vec3& fallback)
 	{
+		const float length = glm::length(value);
+		if (length <= 1e-6f)
+		{
+			return fallback;
+		}
+		return value / length;
+	}
+
+	void PackAreaLight(const TransformComponent& transform, const AreaLightComponent& source, AreaLightData& target)
+	{
+		const glm::vec3 rayDir = NormalizeOr(source.direction, glm::vec3(0.0f, -1.0f, 0.0f));
+		const glm::vec3 helper = std::abs(glm::dot(rayDir, glm::vec3(0.0f, 1.0f, 0.0f))) > 0.95f
+			? glm::vec3(1.0f, 0.0f, 0.0f)
+			: glm::vec3(0.0f, 1.0f, 0.0f);
+		const glm::vec3 uDirection = NormalizeOr(glm::cross(helper, rayDir), glm::vec3(1.0f, 0.0f, 0.0f));
+		const glm::vec3 vDirection = NormalizeOr(glm::cross(rayDir, uDirection), glm::vec3(0.0f, 0.0f, 1.0f));
+
+		target.u = uDirection * source.width;
+		target.v = vDirection * source.height;
+		target.beginPos = transform.translation - target.u * 0.5f - target.v * 0.5f;
+		target.color = source.color * source.intensity;
+		target.rayDir = rayDir;
+	}
+
+	void PackRadiusLight(const TransformComponent& transform, const RadiusLightComponent& source, RadiusLightData& target)
+	{
+		target.centerPos = transform.translation;
+		target.color = source.color * source.intensity;
+		target.radius = source.radius;
+	}
+
+	std::string ResolveShaderPath(const ResourceConfig& resourceConfig, ResourceConfig::Shader shader)
+	{
+		std::string path;
+		std::string error;
+		if (!resourceConfig.TryGetShaderPath(shader, path, &error))
+		{
+			throw std::runtime_error("failed to resolve shader path from shaders.json: " + error);
+		}
+		return path;
+	}
+}
+
+	Renderer::Renderer(const Scene& scene, const ResourceConfig& resourceConfig, ResourceManager& resourceManager)
+	{
+		resourceConfig_ = &resourceConfig;
+		resourceManager_ = &resourceManager;
 		InitRayTracing(scene);
 	}
 
@@ -165,7 +216,11 @@
 			VMA_MEMORY_USAGE_CPU_ONLY).release();
 		transformBuffer_->uploadData(&transformMatrix, VK_WHOLE_SIZE);
 
-		model_ = std::make_shared<RTModel>(g_pVkMemoryAllocator, g_pCommandPool, g_Queue);
+		if (resourceManager_)
+		{
+			resourceManager_->SetVulkanContext(g_pVkMemoryAllocator, g_pCommandPool, g_Queue);
+		}
+		model_ = std::make_shared<RTModel>(g_pVkMemoryAllocator, g_pCommandPool, g_Queue, resourceManager_);
 		model_->UploadScene(scene);
 
 		VkDeviceOrHostAddressConstKHR vertexBufferDeviceAddress{};
@@ -252,26 +307,31 @@
 		bottomLevelAS_ = rtBackend_->BuildAccelerationStructure(buildDesc);
 
 		UniformLightsData lightData{};
-		lightData.areaLightCount = static_cast<uint32_t>(std::min<size_t>(scene.GetAreaLights().size(), MAX_AREA_LIGHT_NUM));
-		for (uint32_t i = 0; i < lightData.areaLightCount; i++)
+		for (Entity entity : scene.GetEntities())
 		{
-			const AreaLight& source = scene.GetAreaLights()[i];
-			AreaLightData& target = lightData.areaLightsData[i];
-			target.beginPos = source.beginPos;
-			target.u = source.u;
-			target.v = source.v;
-			target.color = source.color;
-			target.rayDir = source.rayDir;
-		}
+			const TransformComponent* transform = scene.TryGetTransform(entity);
+			if (!transform)
+			{
+				continue;
+			}
 
-		lightData.radiusLightCount = static_cast<uint32_t>(std::min<size_t>(scene.GetRadiusLights().size(), MAX_RADIUS_LIGHT_NUM));
-		for (uint32_t i = 0; i < lightData.radiusLightCount; i++)
-		{
-			const RadiusLight& source = scene.GetRadiusLights()[i];
-			RadiusLightData& target = lightData.radiusLightsData[i];
-			target.centerPos = source.centerPos;
-			target.color = source.color;
-			target.radius = source.radius;
+			if (const AreaLightComponent* source = scene.TryGetAreaLight(entity))
+			{
+				if (lightData.areaLightCount < MAX_AREA_LIGHT_NUM)
+				{
+					PackAreaLight(*transform, *source, lightData.areaLightsData[lightData.areaLightCount]);
+					lightData.areaLightCount++;
+				}
+			}
+
+			if (const RadiusLightComponent* source = scene.TryGetRadiusLight(entity))
+			{
+				if (lightData.radiusLightCount < MAX_RADIUS_LIGHT_NUM)
+				{
+					PackRadiusLight(*transform, *source, lightData.radiusLightsData[lightData.radiusLightCount]);
+					lightData.radiusLightCount++;
+				}
+			}
 		}
 
 		lightsBuffer_ = new vulkan::VulkanLocalBuffer(g_pVkMemoryAllocator, sizeof(UniformLightsData),
@@ -394,10 +454,10 @@
 		vkCreatePipelineLayout(g_Device, &pipelineLayoutCI, nullptr, &rtPipelineLayout_);
 
 		std::vector<rt::ShaderStageDesc> shaderStages = {
-			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/raygen.rgen.spv", VK_SHADER_STAGE_RAYGEN_BIT_KHR },
-			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/miss.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR },
-			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/shadow.rmiss.spv", VK_SHADER_STAGE_MISS_BIT_KHR },
-			{ "E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/rt/closesthit.rchit.spv", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR }
+			{ ResolveShaderPath(*resourceConfig_, ResourceConfig::Shader::RayGen), VK_SHADER_STAGE_RAYGEN_BIT_KHR },
+			{ ResolveShaderPath(*resourceConfig_, ResourceConfig::Shader::Miss), VK_SHADER_STAGE_MISS_BIT_KHR },
+			{ ResolveShaderPath(*resourceConfig_, ResourceConfig::Shader::ShadowMiss), VK_SHADER_STAGE_MISS_BIT_KHR },
+			{ ResolveShaderPath(*resourceConfig_, ResourceConfig::Shader::ClosestHit), VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR }
 		};
 
 		std::vector<rt::ShaderGroupDesc> shaderGroups = {
@@ -442,7 +502,8 @@
 		vkCreatePipelineLayout(g_Device, &pipelineLayoutCI, nullptr, &denoisePipelineLayout_);
 
 		// Shader
-		VkShaderModule shaderModule = vulkan::loadShader("E:/Git/Walnut-Learning/Walnut-Learning/Walnut/src/Walnut/shaders/denoise/svgf.comp.spv", g_Device);
+		const std::string shaderPath = ResolveShaderPath(*resourceConfig_, ResourceConfig::Shader::DenoiseSvgf);
+		VkShaderModule shaderModule = vulkan::loadShader(shaderPath.c_str(), g_Device);
 		VkPipelineShaderStageCreateInfo shaderStage{};
 		shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		shaderStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -647,8 +708,13 @@
 	}
 
 Camera::Camera(glm::vec3 position, glm::vec3 front)
-	:position_(position)
 {
+	SetView(position, front);
+}
+
+void Camera::SetView(glm::vec3 position, glm::vec3 front)
+{
+	position_ = position;
 	front_ = glm::normalize(front);
 	cachedYaw_ = angle_to_radius(std::asin(front_.z / glm::length(glm::vec2(front_.x, front_.z))));
 	cachedYaw_ = front_.x > 0 ? cachedYaw_ : (180.0f - cachedYaw_);

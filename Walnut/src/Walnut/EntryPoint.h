@@ -1,5 +1,7 @@
 #pragma once
 
+#include "RuntimePath.h"
+
 #ifdef WL_PLATFORM_WINDOWS
 
 extern Walnut::Application* Walnut::CreateApplication(int argc, char** argv);
@@ -9,6 +11,8 @@ namespace Walnut {
 
 	int Main(int argc, char** argv)
 	{
+		Walnut::RuntimePath::Initialize(argc, argv);
+
 		while (g_ApplicationRunning)
 		{
 			Walnut::Application* app = Walnut::CreateApplication(argc, argv);

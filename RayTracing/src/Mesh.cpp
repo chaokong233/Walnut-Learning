@@ -1,10 +1,12 @@
 #include "Mesh.h"
 
+#include "ResourceManager.h"
 #include "Scene.h"
 #include "Walnut/myVulkan/myVulkanInclude.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <iostream>
 #include <stdexcept>
 
 TexturePool* g_texturePool = new TexturePool();
@@ -46,17 +48,19 @@ void RTModel::UploadScene(const Scene& scene)
 	indices.buffer.reset();
 	vertices.buffer.reset();
 
-	for (const Entity& entity : scene.GetEntities())
+	for (Entity entity : scene.GetEntities())
 	{
-		if (!entity.visible || !entity.model)
+		const MeshRendererComponent* meshRenderer = scene.TryGetMeshRenderer(entity);
+		const TransformComponent* transformComponent = scene.TryGetTransform(entity);
+		if (!meshRenderer || !meshRenderer->visible || !meshRenderer->model || !transformComponent)
 		{
 			continue;
 		}
 
-		const glm::mat4 transform = entity.transform.GetMatrix();
+		const glm::mat4 transform = transformComponent->GetMatrix();
 		const glm::mat3 normalMatrix = glm::inverseTranspose(glm::mat3(transform));
 
-		for (const Mesh& sourceMesh : entity.model->GetMeshes())
+		for (const Mesh& sourceMesh : meshRenderer->model->GetMeshes())
 		{
 			auto newMesh = std::make_shared<RTMesh>();
 			newMesh->geometry.firstVertex = static_cast<uint32_t>(vertices.scratchArray.size());
@@ -111,40 +115,18 @@ void RTModel::UploadScene(const Scene& scene)
 
 int RTModel::loadTexture(const std::string& path)
 {
-	if (path.empty())
+	std::string error;
+	const int textureID = resourceManager_ ? resourceManager_->LoadTextureForGPU(path, &error) : -1;
+	if (textureID < 0 && !error.empty())
 	{
-		return -1;
+		std::cerr << "[Warning Texture] " << error << std::endl;
 	}
-
-	using namespace vulkan;
-
-	const int existingID = g_texturePool->FindID(path);
-	if (existingID >= 0)
-	{
-		return existingID;
-	}
-
-	VulkanLoadedTexture::CopierCreateInfo info;
-	info.commandPool = commandPool_;
-	info.transferQueue = queue_;
-
-	auto texture = new VulkanLoadedTexture(allocator_, path, info, VK_IMAGE_USAGE_SAMPLED_BIT);
-
-	SingleTimeCommands cmd(info.commandPool);
-	VulkanImage::transitionImageLayout(cmd, *texture,
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1);
-
-	auto sampler = new VulkanSampler(allocator_->getDevice());
-	return g_texturePool->Add(path, vulkanSampleImage(texture, sampler));
+	return textureID;
 }
 
 TexturePool::~TexturePool()
 {
-	for (auto pair : sampleImage)
-	{
-		delete pair.first;
-		delete pair.second;
-	}
+	Clear();
 }
 
 int TexturePool::Add(const std::string& path, vulkanSampleImage image)
@@ -158,6 +140,18 @@ int TexturePool::Add(const std::string& path, vulkanSampleImage image)
 	sampleImage.push_back(image);
 	imageInfo_.push_back({ image.second->handle(), image.first->getView(), VK_IMAGE_LAYOUT_GENERAL });
 	return static_cast<int>(sampleImage.size() - 1);
+}
+
+void TexturePool::Clear()
+{
+	for (auto pair : sampleImage)
+	{
+		delete pair.first;
+		delete pair.second;
+	}
+	sampleImage.clear();
+	path_to_imageID_map.clear();
+	imageInfo_.clear();
 }
 
 bool TexturePool::isExisted(const std::string& path)

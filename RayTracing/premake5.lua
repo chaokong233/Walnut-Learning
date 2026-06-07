@@ -17,6 +17,7 @@ project "RayTracing"
       "../Walnut/src",
       "./",
       "../vendor/assimpInclude",
+      "../vendor/nlohmann",
       "%{IncludeDir.VulkanSDK}",
       "%{IncludeDir.glm}",
    }
@@ -31,6 +32,14 @@ project "RayTracing"
 
    targetdir ("../bin/" .. outputdir .. "/%{prj.name}")
    objdir ("../bin-int/" .. outputdir .. "/%{prj.name}")
+
+   postbuildcommands
+   {
+      "if exist \"%{cfg.targetdir}/config/scene.json\" del \"%{cfg.targetdir}/config/scene.json\"",
+      "{COPYDIR} \"%{prj.location}/config\" \"%{cfg.targetdir}/config\"",
+      "{COPYDIR} \"%{prj.location}/assets\" \"%{cfg.targetdir}/assets\"",
+      "{COPYDIR} \"%{wks.location}/Walnut/src/Walnut/shaders\" \"%{cfg.targetdir}/shaders\""
+   }
 
    filter "system:windows"
       systemversion "latest"

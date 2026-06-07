@@ -1,0 +1,31 @@
+{
+  "camera": {
+    "position": [0.0, 0.0, 4.0],
+    "front": [0.0, 0.0, -1.0],
+    "focusDistance": 2.0,
+    "dofFocusDistance": 6.0,
+    "lensRadius": 0.02,
+    "useDOF": true
+  },
+  "entities": [
+    {
+      "name": "Cornell Box",
+      "model": "cornell_box",
+      "transform": {
+        "translation": [0.0, 0.0, 0.0],
+        "rotation": [0.0, 0.0, 0.0],
+        "scale": [1.0, 1.0, 1.0]
+      }
+    }
+  ],
+  "radiusLights": [
+    {
+      "name": "Radius Light",
+      "translation": [0.0, 0.8, 0.0],
+      "color": [1.15, 0.8, 0.27],
+      "intensity": 1.0,
+      "radius": 0.15
+    }
+  ],
+  "areaLights": []
+}

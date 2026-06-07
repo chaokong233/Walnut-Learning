@@ -18,6 +18,7 @@ namespace vulkan
 }
 
 class TexturePool;
+class ResourceManager;
 class Scene;
 extern TexturePool* g_texturePool;
 
@@ -84,8 +85,8 @@ public:
 class RTModel : public RTNode
 {
 public:
-	RTModel(vulkan::VulkanAllocator* allocator, vulkan::CommandPool* commandPool, VkQueue queue)
-		: allocator_(allocator), commandPool_(commandPool), queue_(queue) {}
+	RTModel(vulkan::VulkanAllocator* allocator, vulkan::CommandPool* commandPool, VkQueue queue, ResourceManager* resourceManager = nullptr)
+		: allocator_(allocator), commandPool_(commandPool), queue_(queue), resourceManager_(resourceManager) {}
 
 	std::vector<std::shared_ptr<RTMesh>> linerMeshes;
 
@@ -110,6 +111,7 @@ private:
 	vulkan::VulkanAllocator* allocator_;
 	vulkan::CommandPool* commandPool_;
 	VkQueue queue_;
+	ResourceManager* resourceManager_{ nullptr };
 };
 
 class TexturePool
@@ -124,6 +126,7 @@ public:
 	~TexturePool();
 
 	int Add(const std::string&, vulkanSampleImage);
+	void Clear();
 	bool isExisted(const std::string&);
 	int FindID(const std::string&);
 

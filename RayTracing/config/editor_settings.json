@@ -1,0 +1,22 @@
+{
+  "activeRenderMode": "preview",
+  "final": {
+    "adaptiveNoise": true,
+    "denoise": true,
+    "maxBounceCount": 8,
+    "maxSamples": 64,
+    "minSamples": 16,
+    "noiseThreshold": 0.005
+  },
+  "outputType": "finalColor",
+  "overlayEnabled": true,
+  "preview": {
+    "adaptiveNoise": false,
+    "denoise": false,
+    "maxBounceCount": 6,
+    "maxSamples": 4,
+    "minSamples": 1,
+    "noiseThreshold": 0.008
+  },
+  "version": 1
+}

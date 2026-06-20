@@ -35,7 +35,7 @@ namespace
 		result.Subsurface = material.Subsurface;
 		result.Anisotropic = material.Anisotropic;
 		result.BaseColorTextureID = uploader.loadTexture(material.BaseColorTexturePath);
-		result.IBLTextureID = uploader.loadTexture(material.IBLTexturePath);
+		result.IBLTextureID = uploader.loadTexture(material.IBLTexturePath.empty() ? material.NormalTexturePath : material.IBLTexturePath);
 		return result;
 	}
 }
@@ -152,6 +152,44 @@ void TexturePool::Clear()
 	sampleImage.clear();
 	path_to_imageID_map.clear();
 	imageInfo_.clear();
+}
+
+void TexturePool::RetainOnly(const std::unordered_set<std::string>& liveTexturePaths)
+{
+	std::vector<vulkanSampleImage> retainedImages;
+	std::unordered_map<std::string, uint32_t> retainedIDs;
+	std::vector<VkDescriptorImageInfo> retainedImageInfos;
+	retainedImages.reserve(sampleImage.size());
+	retainedImageInfos.reserve(imageInfo_.size());
+
+	for (const auto& [path, index] : path_to_imageID_map)
+	{
+		if (liveTexturePaths.find(path) == liveTexturePaths.end())
+		{
+			if (index < sampleImage.size())
+			{
+				delete sampleImage[index].first;
+				delete sampleImage[index].second;
+			}
+			continue;
+		}
+
+		if (index >= sampleImage.size())
+		{
+			continue;
+		}
+
+		retainedIDs[path] = static_cast<uint32_t>(retainedImages.size());
+		retainedImages.push_back(sampleImage[index]);
+		if (index < imageInfo_.size())
+		{
+			retainedImageInfos.push_back(imageInfo_[index]);
+		}
+	}
+
+	sampleImage = std::move(retainedImages);
+	path_to_imageID_map = std::move(retainedIDs);
+	imageInfo_ = std::move(retainedImageInfos);
 }
 
 bool TexturePool::isExisted(const std::string& path)

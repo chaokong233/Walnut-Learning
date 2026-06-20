@@ -45,6 +45,7 @@ public:
 	std::shared_ptr<Model> LoadModelAsset(const std::string& id, std::string* errorMessage = nullptr);
 	std::shared_ptr<Model> LoadModelFile(const std::string& path, const std::filesystem::path& relativeBase = {}, std::string* errorMessage = nullptr);
 	bool RebindModel(Scene& scene, Entity entity, const std::string& path, std::string* errorMessage = nullptr, const std::filesystem::path& relativeBase = {});
+	void PruneModelCacheForScene(const Scene& scene);
 
 	bool ResolveTexturePath(const std::string& path, std::filesystem::path& resolvedPath, std::string* errorMessage = nullptr, const std::filesystem::path& relativeBase = {}) const;
 	bool ApplyMaterialTexture(Model& model, uint32_t meshIndex, MaterialTextureSlot slot, const std::string& path, std::string* errorMessage = nullptr, const std::filesystem::path& relativeBase = {}) const;

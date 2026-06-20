@@ -6,6 +6,9 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -27,6 +30,105 @@ namespace
 	glm::vec3 ToVec3(const aiColor3D& color)
 	{
 		return glm::vec3(color.r, color.g, color.b);
+	}
+
+	Vertex MakeVertex(const glm::vec3& position, const glm::vec3& normal, const glm::vec3& tangent, const glm::vec2& texcoord)
+	{
+		Vertex vertex{};
+		vertex.position = position;
+		vertex.normal = normal;
+		vertex.tangent = tangent;
+		vertex.texcoord = texcoord;
+		return vertex;
+	}
+
+	Mesh CreateSquareMesh()
+	{
+		Mesh mesh;
+		mesh.name = "Square";
+		mesh.vertices = {
+			MakeVertex(glm::vec3(-0.5f, 0.0f, -0.5f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(0.0f, 0.0f)),
+			MakeVertex(glm::vec3(0.5f, 0.0f, -0.5f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(1.0f, 0.0f)),
+			MakeVertex(glm::vec3(0.5f, 0.0f, 0.5f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(1.0f, 1.0f)),
+			MakeVertex(glm::vec3(-0.5f, 0.0f, 0.5f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(0.0f, 1.0f))
+		};
+		mesh.indices = { 0, 1, 2, 2, 3, 0 };
+		return mesh;
+	}
+
+	void AppendCubeFace(Mesh& mesh, const glm::vec3& normal, const glm::vec3& tangent, const std::array<glm::vec3, 4>& positions)
+	{
+		const uint32_t firstVertex = static_cast<uint32_t>(mesh.vertices.size());
+		mesh.vertices.push_back(MakeVertex(positions[0], normal, tangent, glm::vec2(0.0f, 0.0f)));
+		mesh.vertices.push_back(MakeVertex(positions[1], normal, tangent, glm::vec2(1.0f, 0.0f)));
+		mesh.vertices.push_back(MakeVertex(positions[2], normal, tangent, glm::vec2(1.0f, 1.0f)));
+		mesh.vertices.push_back(MakeVertex(positions[3], normal, tangent, glm::vec2(0.0f, 1.0f)));
+		mesh.indices.insert(mesh.indices.end(), {
+			firstVertex, firstVertex + 1, firstVertex + 2,
+			firstVertex + 2, firstVertex + 3, firstVertex
+		});
+	}
+
+	Mesh CreateCubeMesh()
+	{
+		Mesh mesh;
+		mesh.name = "Cube";
+		constexpr float h = 0.5f;
+		AppendCubeFace(mesh, glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(1.0f, 0.0f, 0.0f), {
+			glm::vec3(-h, -h, h), glm::vec3(h, -h, h), glm::vec3(h, h, h), glm::vec3(-h, h, h) });
+		AppendCubeFace(mesh, glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(-1.0f, 0.0f, 0.0f), {
+			glm::vec3(h, -h, -h), glm::vec3(-h, -h, -h), glm::vec3(-h, h, -h), glm::vec3(h, h, -h) });
+		AppendCubeFace(mesh, glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), {
+			glm::vec3(h, -h, h), glm::vec3(h, -h, -h), glm::vec3(h, h, -h), glm::vec3(h, h, h) });
+		AppendCubeFace(mesh, glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), {
+			glm::vec3(-h, -h, -h), glm::vec3(-h, -h, h), glm::vec3(-h, h, h), glm::vec3(-h, h, -h) });
+		AppendCubeFace(mesh, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), {
+			glm::vec3(-h, h, h), glm::vec3(h, h, h), glm::vec3(h, h, -h), glm::vec3(-h, h, -h) });
+		AppendCubeFace(mesh, glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), {
+			glm::vec3(-h, -h, -h), glm::vec3(h, -h, -h), glm::vec3(h, -h, h), glm::vec3(-h, -h, h) });
+		return mesh;
+	}
+
+	Mesh CreateSphereMesh()
+	{
+		Mesh mesh;
+		mesh.name = "Sphere";
+		constexpr uint32_t segments = 32;
+		constexpr uint32_t rings = 16;
+		constexpr float radius = 0.5f;
+		constexpr float pi = 3.14159265358979323846f;
+
+		for (uint32_t y = 0; y <= rings; y++)
+		{
+			const float v = static_cast<float>(y) / static_cast<float>(rings);
+			const float theta = v * pi;
+			for (uint32_t x = 0; x <= segments; x++)
+			{
+				const float u = static_cast<float>(x) / static_cast<float>(segments);
+				const float phi = u * pi * 2.0f;
+				glm::vec3 normal(
+					std::sin(theta) * std::cos(phi),
+					std::cos(theta),
+					std::sin(theta) * std::sin(phi));
+				glm::vec3 tangent(-std::sin(phi), 0.0f, std::cos(phi));
+				mesh.vertices.push_back(MakeVertex(normal * radius, normal, tangent, glm::vec2(u, 1.0f - v)));
+			}
+		}
+
+		for (uint32_t y = 0; y < rings; y++)
+		{
+			for (uint32_t x = 0; x < segments; x++)
+			{
+				const uint32_t row0 = y * (segments + 1);
+				const uint32_t row1 = (y + 1) * (segments + 1);
+				mesh.indices.insert(mesh.indices.end(), {
+					row0 + x, row1 + x, row1 + x + 1,
+					row1 + x + 1, row0 + x + 1, row0 + x
+				});
+			}
+		}
+
+		return mesh;
 	}
 
 	std::string LoadMaterialTexturePath(aiMaterial* material, aiTextureType type, const std::string& directory)
@@ -99,7 +201,10 @@ namespace
 		}
 
 		result.BaseColorTexturePath = LoadMaterialTexturePath(material, aiTextureType_DIFFUSE, directory);
-		result.IBLTexturePath = LoadMaterialTexturePath(material, aiTextureType_NORMALS, directory);
+		result.NormalTexturePath = LoadMaterialTexturePath(material, aiTextureType_NORMALS, directory);
+		result.MetallicTexturePath = LoadMaterialTexturePath(material, aiTextureType_METALNESS, directory);
+		result.RoughnessTexturePath = LoadMaterialTexturePath(material, aiTextureType_DIFFUSE_ROUGHNESS, directory);
+		result.IBLTexturePath = result.NormalTexturePath;
 		return result;
 	}
 
@@ -180,6 +285,42 @@ namespace
 	}
 }
 
+const char* PrimitiveTypeToString(PrimitiveType type)
+{
+	switch (type)
+	{
+	case PrimitiveType::Square:
+		return "square";
+	case PrimitiveType::Cube:
+		return "cube";
+	case PrimitiveType::Sphere:
+		return "sphere";
+	}
+
+	return "square";
+}
+
+bool TryParsePrimitiveType(const std::string& value, PrimitiveType& type)
+{
+	if (value == "square")
+	{
+		type = PrimitiveType::Square;
+		return true;
+	}
+	if (value == "cube")
+	{
+		type = PrimitiveType::Cube;
+		return true;
+	}
+	if (value == "sphere")
+	{
+		type = PrimitiveType::Sphere;
+		return true;
+	}
+
+	return false;
+}
+
 std::shared_ptr<Model> Model::LoadFromFile(const std::string& path, const std::filesystem::path& relativeBase)
 {
 	std::filesystem::path resolvedPath;
@@ -253,6 +394,29 @@ std::shared_ptr<Model> Model::CreateMissingResourcePlaceholder(const std::string
 	return model;
 }
 
+std::shared_ptr<Model> Model::CreatePrimitive(PrimitiveType type)
+{
+	auto model = std::shared_ptr<Model>(new Model());
+	model->primitive_ = true;
+	model->primitiveType_ = type;
+	model->path_ = std::string("primitive:") + PrimitiveTypeToString(type);
+
+	switch (type)
+	{
+	case PrimitiveType::Square:
+		model->AddMesh(CreateSquareMesh());
+		break;
+	case PrimitiveType::Cube:
+		model->AddMesh(CreateCubeMesh());
+		break;
+	case PrimitiveType::Sphere:
+		model->AddMesh(CreateSphereMesh());
+		break;
+	}
+
+	return model;
+}
+
 bool Model::RebindSourcePath(const std::string& path, std::string* errorMessage, const std::filesystem::path& relativeBase)
 {
 	std::shared_ptr<Model> loadedModel;
@@ -269,6 +433,7 @@ bool Model::RebindSourcePath(const std::string& path, std::string* errorMessage,
 	resolvedPath_ = loadedModel->resolvedPath_;
 	lastError_.clear();
 	meshes_ = std::move(loadedModel->meshes_);
+	primitive_ = false;
 	return true;
 }
 
@@ -300,6 +465,15 @@ bool Model::RebindMaterialTexture(uint32_t meshIndex, MaterialTextureSlot slot, 
 	{
 	case MaterialTextureSlot::BaseColor:
 		material.BaseColorTexturePath = storedPath;
+		break;
+	case MaterialTextureSlot::Metallic:
+		material.MetallicTexturePath = storedPath;
+		break;
+	case MaterialTextureSlot::Roughness:
+		material.RoughnessTexturePath = storedPath;
+		break;
+	case MaterialTextureSlot::Normal:
+		material.NormalTexturePath = storedPath;
 		break;
 	case MaterialTextureSlot::IBL:
 		material.IBLTexturePath = storedPath;
@@ -409,6 +583,23 @@ Entity Scene::CreateModelEntity(const std::string& name, std::shared_ptr<Model> 
 	const Entity entity = CreateEntity(name, transform);
 	AddMeshRenderer(entity, std::move(model), true, modelAssetID);
 	return entity;
+}
+
+bool Scene::DestroyEntity(Entity entity)
+{
+	if (!IsValid(entity))
+	{
+		return false;
+	}
+
+	entities_.erase(std::remove(entities_.begin(), entities_.end(), entity), entities_.end());
+	tags_.erase(entity);
+	transforms_.erase(entity);
+	meshRenderers_.erase(entity);
+	radiusLights_.erase(entity);
+	areaLights_.erase(entity);
+	Touch();
+	return true;
 }
 
 MeshRendererComponent& Scene::AddMeshRenderer(Entity entity, std::shared_ptr<Model> model, bool visible, const std::string& modelAssetID)

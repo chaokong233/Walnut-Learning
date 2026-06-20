@@ -3,6 +3,7 @@
 #include "Scene.h"
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,8 +23,24 @@ struct SceneMaterialTextureDesc
 {
 	uint32_t meshIndex{ 0 };
 	std::string meshName;
+	std::optional<glm::vec3> baseColor;
+	std::optional<glm::vec3> emissiveColor;
+	std::optional<glm::vec3> specularTint;
+	std::optional<float> roughness;
+	std::optional<float> metallic;
+	std::optional<float> specular;
+	std::optional<float> subsurface;
+	std::optional<float> anisotropic;
+	bool hasBaseColorTexture{ false };
 	std::string baseColorTexture;
 	std::string baseColorTextureAsset;
+	bool hasMetallicTexture{ false };
+	std::string metallicTexture;
+	bool hasRoughnessTexture{ false };
+	std::string roughnessTexture;
+	bool hasNormalTexture{ false };
+	std::string normalTexture;
+	bool hasIBLTexture{ false };
 	std::string iblTexture;
 	std::string iblTextureAsset;
 };
@@ -33,6 +50,7 @@ struct SceneModelEntityDesc
 	std::string name;
 	std::string modelAssetID;
 	std::string modelPath;
+	std::optional<PrimitiveType> primitive;
 	bool visible{ true };
 	TransformComponent transform;
 	std::vector<SceneMaterialTextureDesc> materials;

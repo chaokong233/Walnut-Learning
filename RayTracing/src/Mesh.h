@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -127,6 +128,7 @@ public:
 
 	int Add(const std::string&, vulkanSampleImage);
 	void Clear();
+	void RetainOnly(const std::unordered_set<std::string>& liveTexturePaths);
 	bool isExisted(const std::string&);
 	int FindID(const std::string&);
 

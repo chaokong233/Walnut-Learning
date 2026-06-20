@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <unordered_set>
 
 namespace
 {
@@ -246,6 +247,37 @@ bool ResourceManager::RebindModel(Scene& scene, Entity entity, const std::string
 	return true;
 }
 
+void ResourceManager::PruneModelCacheForScene(const Scene& scene)
+{
+	std::unordered_set<std::string> liveModelPaths;
+	for (Entity entity : scene.GetEntities())
+	{
+		const MeshRendererComponent* meshRenderer = scene.TryGetMeshRenderer(entity);
+		if (!meshRenderer || !meshRenderer->model)
+		{
+			continue;
+		}
+
+		const std::string& resolvedPath = meshRenderer->model->GetResolvedPath();
+		if (!resolvedPath.empty())
+		{
+			liveModelPaths.insert(resolvedPath);
+		}
+	}
+
+	for (auto it = modelCache_.begin(); it != modelCache_.end();)
+	{
+		if (liveModelPaths.find(it->first) == liveModelPaths.end())
+		{
+			it = modelCache_.erase(it);
+		}
+		else
+		{
+			++it;
+		}
+	}
+}
+
 bool ResourceManager::ResolveTexturePath(const std::string& path, std::filesystem::path& resolvedPath, std::string* errorMessage, const std::filesystem::path& relativeBase) const
 {
 	if (path.empty())
@@ -380,6 +412,33 @@ void ResourceManager::RegisterModelTextures(const std::shared_ptr<Model>& model)
 			std::filesystem::path resolvedPath;
 			std::string error;
 			if (!ResolveTexturePath(mesh.material.BaseColorTexturePath, resolvedPath, &error))
+			{
+				std::cerr << "[Warning Texture] " << error << std::endl;
+			}
+		}
+		if (!mesh.material.MetallicTexturePath.empty())
+		{
+			std::filesystem::path resolvedPath;
+			std::string error;
+			if (!ResolveTexturePath(mesh.material.MetallicTexturePath, resolvedPath, &error))
+			{
+				std::cerr << "[Warning Texture] " << error << std::endl;
+			}
+		}
+		if (!mesh.material.RoughnessTexturePath.empty())
+		{
+			std::filesystem::path resolvedPath;
+			std::string error;
+			if (!ResolveTexturePath(mesh.material.RoughnessTexturePath, resolvedPath, &error))
+			{
+				std::cerr << "[Warning Texture] " << error << std::endl;
+			}
+		}
+		if (!mesh.material.NormalTexturePath.empty())
+		{
+			std::filesystem::path resolvedPath;
+			std::string error;
+			if (!ResolveTexturePath(mesh.material.NormalTexturePath, resolvedPath, &error))
 			{
 				std::cerr << "[Warning Texture] " << error << std::endl;
 			}

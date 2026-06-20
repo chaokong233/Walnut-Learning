@@ -119,8 +119,18 @@ namespace
 
 	}
 
-	void Renderer::Render(Camera& camera, bool isAdaptiveNoise, bool isDenoise)
+	void Renderer::Render(const RenderPacket& packet)
 	{
+		if (packet.viewportWidth == 0 || packet.viewportHeight == 0)
+		{
+			return;
+		}
+
+		OnResize(packet.viewportWidth, packet.viewportHeight);
+		max_render_samples_per_pixel_ = packet.settings.maxSamples;
+		min_render_samples_per_pixel_ = packet.settings.minSamples;
+		min_render_noise_threshold = packet.settings.noiseThreshold;
+		max_bounce_count_ = packet.settings.maxBounceCount;
 		syncSceneResources();
 
 		outputFinalImage_.swap(lastFrameFinalImage_);
@@ -130,9 +140,25 @@ namespace
 		nowFrameWorldPositionImage_.swap(lastFrameWorldPositionImage_);
 
 		ImGui_ImplVulkanH_Window* wd = &g_MainWindowData;
-		auto renderFunc = std::bind(&Renderer::buildCommandBuffers, this, wd, &camera);
+		auto renderFunc = std::bind(&Renderer::buildCommandBuffers, this, wd, packet.camera, packet.settings);
 		s_VulkanRenderFuncQueue.push_back(renderFunc);
+	}
 
+	void Renderer::Render(Camera& camera, bool isAdaptiveNoise, bool isDenoise)
+	{
+		RenderPacket packet;
+		packet.viewportWidth = outputFinalImage_ ? outputFinalImage_->GetWidth() : 0;
+		packet.viewportHeight = outputFinalImage_ ? outputFinalImage_->GetHeight() : 0;
+		packet.sceneRevision = scene_ ? scene_->GetRevision() : 0;
+		packet.settings.mode = isAdaptiveNoise ? RenderMode::Final : RenderMode::Preview;
+		packet.settings.maxSamples = isAdaptiveNoise ? max_render_samples_per_pixel_ : max_preview_samples_per_pixel_;
+		packet.settings.minSamples = min_render_samples_per_pixel_;
+		packet.settings.maxBounceCount = max_bounce_count_;
+		packet.settings.noiseThreshold = min_render_noise_threshold;
+		packet.settings.adaptiveNoise = isAdaptiveNoise;
+		packet.settings.denoise = isDenoise;
+		packet.camera = camera.CaptureSnapshot();
+		Render(packet);
 	}
 
 
@@ -444,7 +470,7 @@ namespace
 		// Light Info
         layoutBuilder1.AddBinding(8, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_RAYGEN_BIT_KHR, nullptr);
 		// Texture
-        layoutBuilder1.AddBinding(9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, nullptr, g_texturePool->GetImageInfo()->size());
+        layoutBuilder1.AddBinding(9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, nullptr, MAX_SCENE_TEXTURE_DESCRIPTORS);
         layoutBuilder1.build(g_Device, rtDescriptorSetLayout_);
 
 		VkPipelineLayoutCreateInfo pipelineLayoutCI{};
@@ -542,7 +568,8 @@ namespace
 			writer1.write_buffer(8, lightsBuffer_->buffer(), lightsBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 			if (g_texturePool->GetImageCount() > 0)
 			{
-				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
+				const int textureCount = std::min(g_texturePool->GetImageCount(), static_cast<int>(MAX_SCENE_TEXTURE_DESCRIPTORS));
+				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, textureCount);
 			}
 			writer1.update_set(g_Device, frameDatas_[i].rtDescriptorSet_);
 
@@ -575,7 +602,8 @@ namespace
 			writer1.write_buffer(8, lightsBuffer_->buffer(), lightsBuffer_->getSize(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 			if (g_texturePool->GetImageCount() > 0)
 			{
-				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, g_texturePool->GetImageCount());
+				const int textureCount = std::min(g_texturePool->GetImageCount(), static_cast<int>(MAX_SCENE_TEXTURE_DESCRIPTORS));
+				writer1.write_image(9, g_texturePool->GetImageInfo()->data(), VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, textureCount);
 			}
 			writer1.update_set(g_Device, frameDatas_[i].rtDescriptorSet_);
 
@@ -633,7 +661,7 @@ namespace
 		rtBackend_.reset();
 	}
 
-	void Renderer::buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, Camera* pCamera)
+	void Renderer::buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, CameraSnapshot camera, RenderSettings settings)
 	{
 		// Update
 		updateDescriptorSets();
@@ -643,19 +671,18 @@ namespace
 		uint32_t height = outputFinalImage_->GetHeight();
 
 		// ===================================
-		Camera& camera = *pCamera;
 			// Update Uniform
 		CameraUniformData cameraData{};
-		cameraData.ViewMatrixInverse = glm::inverse(camera.GetViewMatrix());
-		cameraData.ProjMatrixInverse = glm::inverse(camera.GetProjMatrix());
-		cameraData.samples = max_render_samples_per_pixel_;
+		cameraData.ViewMatrixInverse = glm::inverse(camera.viewMatrix);
+		cameraData.ProjMatrixInverse = glm::inverse(camera.projMatrix);
+		cameraData.samples = settings.maxSamples;
 		cameraData.frame = nowFrameCount;
 		nowFrameCount++;
 		frameDatas_[wd->FrameIndex].RTUniformBuffer_->uploadData(&cameraData, sizeof(CameraUniformData), 0);
 
 			// Last frame camera for denoise
 		frameDatas_[wd->FrameIndex].DenoiseUniformBuffer_->uploadData(&lastFrameCameraVPMatrix_, sizeof(DenoiseCameraUniformData), 0);
-		lastFrameCameraVPMatrix_ = camera.GetPreVPMatrix();
+		lastFrameCameraVPMatrix_ = camera.previousVPMatrix;
 
 		// CMD
 		ImGui_ImplVulkanH_Frame* fd = &wd->Frames[wd->FrameIndex];
@@ -719,6 +746,21 @@ void Camera::SetView(glm::vec3 position, glm::vec3 front)
 	cachedYaw_ = angle_to_radius(std::asin(front_.z / glm::length(glm::vec2(front_.x, front_.z))));
 	cachedYaw_ = front_.x > 0 ? cachedYaw_ : (180.0f - cachedYaw_);
 	cachedPitch_ = angle_to_radius(std::asin(front_.y / glm::length(front_)));
+}
+
+CameraSnapshot Camera::CaptureSnapshot() const
+{
+	CameraSnapshot snapshot;
+	snapshot.position = position_;
+	snapshot.front = front_;
+	snapshot.focusDistance = focus_distance_;
+	snapshot.dofFocusDistance = DOF_focus_distance_;
+	snapshot.lensRadius = lens_radius_;
+	snapshot.useDOF = useDOF_;
+	snapshot.viewMatrix = ViewMatrix_;
+	snapshot.projMatrix = ProjMatrix_;
+	snapshot.previousVPMatrix = preVPMatrix_;
+	return snapshot;
 }
 
 void Camera::Tick(float ts, uint32_t width, uint32_t height)

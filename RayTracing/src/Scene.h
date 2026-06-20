@@ -25,14 +25,30 @@ struct Material
 	float Anisotropic{ 0.0f };
 
 	std::string BaseColorTexturePath;
+	std::string MetallicTexturePath;
+	std::string RoughnessTexturePath;
+	std::string NormalTexturePath;
 	std::string IBLTexturePath;
 };
 
 enum class MaterialTextureSlot
 {
 	BaseColor,
+	Metallic,
+	Roughness,
+	Normal,
 	IBL
 };
+
+enum class PrimitiveType
+{
+	Square,
+	Cube,
+	Sphere
+};
+
+const char* PrimitiveTypeToString(PrimitiveType type);
+bool TryParsePrimitiveType(const std::string& value, PrimitiveType& type);
 
 struct Mesh
 {
@@ -48,12 +64,16 @@ public:
 	static std::shared_ptr<Model> LoadFromFile(const std::string& path, const std::filesystem::path& relativeBase = {});
 	static bool TryLoadFromFile(const std::string& path, std::shared_ptr<Model>& model, std::string* errorMessage = nullptr, const std::filesystem::path& relativeBase = {});
 	static std::shared_ptr<Model> CreateMissingResourcePlaceholder(const std::string& sourcePath, const std::string& reason);
+	static std::shared_ptr<Model> CreatePrimitive(PrimitiveType type);
 
 	inline const std::string& GetPath() const { return path_; }
 	inline const std::string& GetResolvedPath() const { return resolvedPath_; }
 	inline const std::string& GetLastError() const { return lastError_; }
 	inline const std::vector<Mesh>& GetMeshes() const { return meshes_; }
+	inline std::vector<Mesh>& GetMeshes() { return meshes_; }
 	inline bool IsValid() const { return !meshes_.empty(); }
+	inline bool IsPrimitive() const { return primitive_; }
+	inline PrimitiveType GetPrimitiveType() const { return primitiveType_; }
 	void AddMesh(Mesh mesh) { meshes_.push_back(std::move(mesh)); }
 	bool RebindSourcePath(const std::string& path, std::string* errorMessage = nullptr, const std::filesystem::path& relativeBase = {});
 	bool RebindMaterialTexture(uint32_t meshIndex, MaterialTextureSlot slot, const std::string& path, std::string* errorMessage = nullptr);
@@ -63,6 +83,8 @@ private:
 	std::string resolvedPath_;
 	std::string lastError_;
 	std::vector<Mesh> meshes_;
+	bool primitive_{ false };
+	PrimitiveType primitiveType_{ PrimitiveType::Square };
 };
 
 using Entity = uint32_t;
@@ -114,6 +136,7 @@ public:
 
 	Entity CreateEntity(const std::string& name, const TransformComponent& transform = {});
 	Entity CreateModelEntity(const std::string& name, std::shared_ptr<Model> model, const TransformComponent& transform = {}, const std::string& modelAssetID = {});
+	bool DestroyEntity(Entity entity);
 
 	MeshRendererComponent& AddMeshRenderer(Entity entity, std::shared_ptr<Model> model, bool visible = true, const std::string& modelAssetID = {});
 	RadiusLightComponent& AddRadiusLight(Entity entity, const RadiusLightComponent& light = {});

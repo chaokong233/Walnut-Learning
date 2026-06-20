@@ -12,10 +12,10 @@
 
 
 // Default
-#define Default_Max_Render_Samples_Per_Pixel 1
-#define Default_Min_Render_Samples_Per_Pixel 4
-#define Default_Max_Preview_Samples_Per_Pixel 128
-#define Default_Max_Bounce_Count_Per_Ray_Render 6
+#define Default_Max_Render_Samples_Per_Pixel 64
+#define Default_Min_Render_Samples_Per_Pixel 16
+#define Default_Max_Preview_Samples_Per_Pixel 2
+#define Default_Max_Bounce_Count_Per_Ray_Render 8
 #define Default_Max_Bounce_Count_Per_Ray_Preview 6
 #define Default_Render_Noise_Threshold 0.008
 
@@ -43,8 +43,55 @@ struct DenoiseCameraUniformData
 	glm::mat4 LastFrameVPMatrix;
 };
 
+enum class RenderMode
+{
+	Preview,
+	Final
+};
+
+enum class RenderOutputType
+{
+	FinalColor = 0,
+	Albedo = 1,
+	Normal = 2
+};
+
+struct RenderSettings
+{
+	RenderMode mode{ RenderMode::Preview };
+	uint32_t maxSamples{ Default_Max_Preview_Samples_Per_Pixel };
+	uint32_t minSamples{ 1 };
+	uint32_t maxBounceCount{ Default_Max_Bounce_Count_Per_Ray_Preview };
+	double noiseThreshold{ Default_Render_Noise_Threshold };
+	bool adaptiveNoise{ false };
+	bool denoise{ false };
+};
+
+struct CameraSnapshot
+{
+	glm::vec3 position{ 0.0f, 0.0f, 4.0f };
+	glm::vec3 front{ 0.0f, 0.0f, -1.0f };
+	float focusDistance{ 2.0f };
+	float dofFocusDistance{ 6.0f };
+	float lensRadius{ 0.02f };
+	bool useDOF{ true };
+	glm::mat4 viewMatrix{ 1.0f };
+	glm::mat4 projMatrix{ 1.0f };
+	glm::mat4 previousVPMatrix{ 1.0f };
+};
+
+struct RenderPacket
+{
+	uint32_t viewportWidth{ 0 };
+	uint32_t viewportHeight{ 0 };
+	uint64_t sceneRevision{ 0 };
+	RenderSettings settings;
+	CameraSnapshot camera;
+};
+
 const uint32_t MAX_AREA_LIGHT_NUM = 5;
 const uint32_t MAX_RADIUS_LIGHT_NUM = 5;
+const uint32_t MAX_SCENE_TEXTURE_DESCRIPTORS = 256;
 
 struct AreaLightData
 {
@@ -80,6 +127,7 @@ public:
 
 	void SetScene(const Scene& scene);
 	void OnResize(uint32_t width, uint32_t height);
+	void Render(const RenderPacket& packet);
 	void Render(Camera& camera, bool isAdaptiveNoise = true, bool isDenoise = false);
 
 	inline std::shared_ptr<Walnut::StorageImage> GetFinalImage() const { return outputFinalImage_; }
@@ -175,7 +223,7 @@ private:
 	void createDescriptorSets();
 	void updateDescriptorSets();
 	void CleanUpRayTracing();
-	void buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, Camera* camera);
+	void buildCommandBuffers(ImGui_ImplVulkanH_Window* wd, CameraSnapshot camera, RenderSettings settings);
 
 };
 
@@ -202,6 +250,7 @@ public:
 	inline glm::mat4 GetPreVPMatrix() const { return preVPMatrix_; }
 	inline glm::mat4 GetViewMatrix() const { return ViewMatrix_; }
 	inline glm::mat4 GetProjMatrix() const { return ProjMatrix_; }
+	CameraSnapshot CaptureSnapshot() const;
 
 	glm::vec3 position_;
 	glm::vec3 vertical_;	

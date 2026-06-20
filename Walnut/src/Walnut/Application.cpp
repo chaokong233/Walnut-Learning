@@ -14,7 +14,9 @@
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
 #include "tool.hpp"
+#include "RuntimePath.h"
 
+#include <filesystem>
 #include <iostream>
 #include <span>
 
@@ -532,7 +534,12 @@ namespace Walnut {
 		io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;       // Enable Keyboard Controls
 		//io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 		io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;           // Enable Docking
-		io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;         // Enable Multi-Viewport / Platform Windows
+		static std::string imguiIniPath;
+		const std::filesystem::path configDirectory = RuntimePath::ResolveFromExecutableDirectory("config");
+		std::error_code createConfigDirectoryError;
+		std::filesystem::create_directories(configDirectory, createConfigDirectoryError);
+		imguiIniPath = (configDirectory / "imgui.ini").generic_string();
+		io.IniFilename = imguiIniPath.c_str();
 		//io.ConfigViewportsNoAutoMerge = true;
 		//io.ConfigViewportsNoTaskBarIcon = true;
 

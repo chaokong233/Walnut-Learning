@@ -51,6 +51,15 @@ namespace
 		return json[key].get<std::string>();
 	}
 
+	std::optional<float> ReadOptionalFloat(const Json& json, const char* key)
+	{
+		if (!json.contains(key) || !json[key].is_number())
+		{
+			return std::nullopt;
+		}
+		return json[key].get<float>();
+	}
+
 	glm::vec3 ReadVec3(const Json& json, const glm::vec3& fallback)
 	{
 		if (!json.is_array() || json.size() < 3)
@@ -62,6 +71,15 @@ namespace
 			json[0].get<float>(),
 			json[1].get<float>(),
 			json[2].get<float>());
+	}
+
+	std::optional<glm::vec3> ReadOptionalVec3(const Json& json, const char* key)
+	{
+		if (!json.contains(key) || !json[key].is_array() || json[key].size() < 3)
+		{
+			return std::nullopt;
+		}
+		return ReadVec3(json[key], glm::vec3(0.0f));
 	}
 
 	TransformComponent ReadTransform(const Json& json)
@@ -168,8 +186,24 @@ namespace
 			SceneMaterialTextureDesc material;
 			material.meshIndex = materialJson.value("meshIndex", material.meshIndex);
 			material.meshName = ReadString(materialJson, "meshName", ReadString(materialJson, "mesh"));
+			material.baseColor = ReadOptionalVec3(materialJson, "baseColor");
+			material.emissiveColor = ReadOptionalVec3(materialJson, "emissiveColor");
+			material.specularTint = ReadOptionalVec3(materialJson, "specularTint");
+			material.roughness = ReadOptionalFloat(materialJson, "roughness");
+			material.metallic = ReadOptionalFloat(materialJson, "metallic");
+			material.specular = ReadOptionalFloat(materialJson, "specular");
+			material.subsurface = ReadOptionalFloat(materialJson, "subsurface");
+			material.anisotropic = ReadOptionalFloat(materialJson, "anisotropic");
+			material.hasBaseColorTexture = materialJson.contains("baseColorTexture");
 			material.baseColorTexture = ReadString(materialJson, "baseColorTexture");
 			material.baseColorTextureAsset = ReadString(materialJson, "baseColorTextureAsset");
+			material.hasMetallicTexture = materialJson.contains("metallicTexture");
+			material.metallicTexture = ReadString(materialJson, "metallicTexture");
+			material.hasRoughnessTexture = materialJson.contains("roughnessTexture");
+			material.roughnessTexture = ReadString(materialJson, "roughnessTexture");
+			material.hasNormalTexture = materialJson.contains("normalTexture");
+			material.normalTexture = ReadString(materialJson, "normalTexture");
+			material.hasIBLTexture = materialJson.contains("iblTexture");
 			material.iblTexture = ReadString(materialJson, "iblTexture");
 			material.iblTextureAsset = ReadString(materialJson, "iblTextureAsset");
 			entity.materials.push_back(std::move(material));
@@ -205,10 +239,16 @@ bool SceneLoader::Load(const std::filesystem::path& scenePath, SceneDocument& do
 			entity.name = ReadString(entityJson, "name", "Entity");
 			entity.modelAssetID = ReadString(entityJson, "model", ReadString(entityJson, "modelAsset"));
 			entity.modelPath = ReadString(entityJson, "modelPath", ReadString(entityJson, "path"));
+			const std::string primitiveName = ReadString(entityJson, "primitive");
+			PrimitiveType primitiveType;
+			if (!primitiveName.empty() && TryParsePrimitiveType(primitiveName, primitiveType))
+			{
+				entity.primitive = primitiveType;
+			}
 			entity.visible = entityJson.value("visible", entity.visible);
 			entity.transform = ReadTransform(entityJson);
 			ReadMaterialOverrides(entityJson, entity);
-			if (!entity.modelAssetID.empty() || !entity.modelPath.empty())
+			if (!entity.modelAssetID.empty() || !entity.modelPath.empty() || entity.primitive.has_value())
 			{
 				document.modelEntities.push_back(std::move(entity));
 			}
@@ -292,6 +332,10 @@ bool SceneLoader::Save(const std::filesystem::path& scenePath, const Scene& scen
 			{
 				entityJson["model"] = meshRenderer->modelAssetID;
 			}
+			else if (meshRenderer->model && meshRenderer->model->IsPrimitive())
+			{
+				entityJson["primitive"] = PrimitiveTypeToString(meshRenderer->model->GetPrimitiveType());
+			}
 			else if (meshRenderer->model)
 			{
 				const std::string& resolvedPath = meshRenderer->model->GetResolvedPath();
@@ -312,25 +356,25 @@ bool SceneLoader::Save(const std::filesystem::path& scenePath, const Scene& scen
 				for (uint32_t i = 0; i < meshes.size(); i++)
 				{
 					const Mesh& mesh = meshes[i];
-					if (mesh.material.BaseColorTexturePath.empty() && mesh.material.IBLTexturePath.empty())
-					{
-						continue;
-					}
-
 					Json materialJson;
 					materialJson["meshIndex"] = i;
 					if (!mesh.name.empty())
 					{
 						materialJson["meshName"] = mesh.name;
 					}
-					if (!mesh.material.BaseColorTexturePath.empty())
-					{
-						materialJson["baseColorTexture"] = MakePathRelativeTo(mesh.material.BaseColorTexturePath, sceneDirectory);
-					}
-					if (!mesh.material.IBLTexturePath.empty())
-					{
-						materialJson["iblTexture"] = MakePathRelativeTo(mesh.material.IBLTexturePath, sceneDirectory);
-					}
+					materialJson["baseColor"] = WriteVec3(mesh.material.BaseColor);
+					materialJson["emissiveColor"] = WriteVec3(mesh.material.EmissiveColor);
+					materialJson["specularTint"] = WriteVec3(mesh.material.SpecularTint);
+					materialJson["roughness"] = mesh.material.Roughness;
+					materialJson["metallic"] = mesh.material.Metallic;
+					materialJson["specular"] = mesh.material.Specular;
+					materialJson["subsurface"] = mesh.material.Subsurface;
+					materialJson["anisotropic"] = mesh.material.Anisotropic;
+					materialJson["baseColorTexture"] = MakePathRelativeTo(mesh.material.BaseColorTexturePath, sceneDirectory);
+					materialJson["metallicTexture"] = MakePathRelativeTo(mesh.material.MetallicTexturePath, sceneDirectory);
+					materialJson["roughnessTexture"] = MakePathRelativeTo(mesh.material.RoughnessTexturePath, sceneDirectory);
+					materialJson["normalTexture"] = MakePathRelativeTo(mesh.material.NormalTexturePath, sceneDirectory);
+					materialJson["iblTexture"] = MakePathRelativeTo(mesh.material.IBLTexturePath, sceneDirectory);
 					materialsJson.push_back(std::move(materialJson));
 				}
 				if (!materialsJson.empty())
@@ -561,6 +605,10 @@ bool SceneManager::ApplyDocument(const SceneDocument& document, const std::files
 				model = Model::CreateMissingResourcePlaceholder(entityDesc.modelPath, loadError);
 			}
 		}
+		else if (entityDesc.primitive.has_value())
+		{
+			model = Model::CreatePrimitive(*entityDesc.primitive);
+		}
 
 		if (!model)
 		{
@@ -569,6 +617,43 @@ bool SceneManager::ApplyDocument(const SceneDocument& document, const std::files
 
 		for (const SceneMaterialTextureDesc& materialDesc : entityDesc.materials)
 		{
+			if (materialDesc.meshIndex < model->GetMeshes().size())
+			{
+				Material& material = model->GetMeshes()[materialDesc.meshIndex].material;
+				if (materialDesc.baseColor)
+				{
+					material.BaseColor = *materialDesc.baseColor;
+				}
+				if (materialDesc.emissiveColor)
+				{
+					material.EmissiveColor = *materialDesc.emissiveColor;
+				}
+				if (materialDesc.specularTint)
+				{
+					material.SpecularTint = *materialDesc.specularTint;
+				}
+				if (materialDesc.roughness)
+				{
+					material.Roughness = *materialDesc.roughness;
+				}
+				if (materialDesc.metallic)
+				{
+					material.Metallic = *materialDesc.metallic;
+				}
+				if (materialDesc.specular)
+				{
+					material.Specular = *materialDesc.specular;
+				}
+				if (materialDesc.subsurface)
+				{
+					material.Subsurface = *materialDesc.subsurface;
+				}
+				if (materialDesc.anisotropic)
+				{
+					material.Anisotropic = *materialDesc.anisotropic;
+				}
+			}
+
 			if (!materialDesc.baseColorTextureAsset.empty())
 			{
 				ResourceManager::TextureAsset textureAsset;
@@ -577,9 +662,24 @@ bool SceneManager::ApplyDocument(const SceneDocument& document, const std::files
 					resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::BaseColor, textureAsset.path, &loadError, resourceManager_->GetAssetsDirectory());
 				}
 			}
-			else if (!materialDesc.baseColorTexture.empty())
+			else if (materialDesc.hasBaseColorTexture)
 			{
 				resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::BaseColor, materialDesc.baseColorTexture, &loadError, sceneDirectory);
+			}
+
+			if (materialDesc.hasMetallicTexture)
+			{
+				resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::Metallic, materialDesc.metallicTexture, &loadError, sceneDirectory);
+			}
+
+			if (materialDesc.hasRoughnessTexture)
+			{
+				resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::Roughness, materialDesc.roughnessTexture, &loadError, sceneDirectory);
+			}
+
+			if (materialDesc.hasNormalTexture)
+			{
+				resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::Normal, materialDesc.normalTexture, &loadError, sceneDirectory);
 			}
 
 			if (!materialDesc.iblTextureAsset.empty())
@@ -590,7 +690,7 @@ bool SceneManager::ApplyDocument(const SceneDocument& document, const std::files
 					resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::IBL, textureAsset.path, &loadError, resourceManager_->GetAssetsDirectory());
 				}
 			}
-			else if (!materialDesc.iblTexture.empty())
+			else if (materialDesc.hasIBLTexture)
 			{
 				resourceManager_->ApplyMaterialTexture(*model, materialDesc.meshIndex, MaterialTextureSlot::IBL, materialDesc.iblTexture, &loadError, sceneDirectory);
 			}
